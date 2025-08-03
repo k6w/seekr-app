@@ -14,11 +14,11 @@
   "files": [
     "dist",
     "dist-electron",
-    "node_modules/sqlite3/**/*"
+    "node_modules/better-sqlite3/**/*"
   ],
-  "nodeGypRebuild": true,
+  "nodeGypRebuild": false,
   "buildDependenciesFromSource": false,
-  "npmRebuild": true,
+  "npmRebuild": false,
   "mac": {
     "target": [
       "dmg"
@@ -54,9 +54,6 @@
     "createStartMenuShortcut": true,
     "shortcutName": "Seekr",
     "deleteAppDataOnUninstall": false,
-    "installerIcon": "src/assets/icon.png",
-    "uninstallerIcon": "src/assets/icon.png",
-    "installerHeaderIcon": "src/assets/icon.png",
     "artifactName": "Seekr-Windows-${version}-Setup.${ext}",
     "displayLanguageSelector": false,
     "installerLanguages": ["en_US"],

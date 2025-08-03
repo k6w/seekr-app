@@ -4,7 +4,7 @@ import { app } from 'electron';
 import { FileItem, FileType } from '../../src/types';
 
 const require = createRequire(import.meta.url);
-const Database = require('sqlite3').Database;
+const Database = require('better-sqlite3');
 
 export class DatabaseService {
   private db: any | null = null;
@@ -16,22 +16,18 @@ export class DatabaseService {
   }
 
   async initialize(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      try {
-        this.db = new Database(this.dbPath, (err: any) => {
-          if (err) {
-            console.error('Database connection error:', err);
-            reject(err);
-            return;
-          }
-          console.log('Database connected successfully');
-          this.createTables().then(resolve).catch(reject);
-        });
-      } catch (error) {
-        console.error('Database initialization error:', error);
-        reject(error);
-      }
-    });
+    try {
+      this.db = new Database(this.dbPath);
+      console.log('Database connected successfully');
+
+      // Enable WAL mode for better performance
+      this.db.pragma('journal_mode = WAL');
+
+      await this.createTables();
+    } catch (error) {
+      console.error('Database initialization error:', error);
+      throw error;
+    }
   }
 
   private async createTables(): Promise<void> {
@@ -62,30 +58,25 @@ export class DatabaseService {
       )
     `;
 
-    const createIndexes = `
-      CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
-      CREATE INDEX IF NOT EXISTS idx_files_extension ON files(extension);
-      CREATE INDEX IF NOT EXISTS idx_files_size ON files(size);
-      CREATE INDEX IF NOT EXISTS idx_files_date_modified ON files(dateModified);
-      CREATE INDEX IF NOT EXISTS idx_files_type ON files(type);
-    `;
+    const createIndexes = [
+      'CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)',
+      'CREATE INDEX IF NOT EXISTS idx_files_extension ON files(extension)',
+      'CREATE INDEX IF NOT EXISTS idx_files_size ON files(size)',
+      'CREATE INDEX IF NOT EXISTS idx_files_date_modified ON files(dateModified)',
+      'CREATE INDEX IF NOT EXISTS idx_files_type ON files(type)'
+    ];
 
-    return new Promise((resolve, reject) => {
-      this.db!.serialize(() => {
-        this.db!.exec(createFilesTable, (err) => {
-          if (err) reject(err);
-        });
-        
-        this.db!.exec(createFtsTable, (err) => {
-          if (err) reject(err);
-        });
-        
-        this.db!.exec(createIndexes, (err) => {
-          if (err) reject(err);
-          else resolve();
-        });
-      });
-    });
+    try {
+      this.db.exec(createFilesTable);
+      this.db.exec(createFtsTable);
+
+      for (const indexSql of createIndexes) {
+        this.db.exec(indexSql);
+      }
+    } catch (error) {
+      console.error('Error creating tables:', error);
+      throw error;
+    }
   }
 
   async insertFile(file: FileItem): Promise<void> {
@@ -110,22 +101,18 @@ export class DatabaseService {
       file.type
     ];
 
-    return new Promise((resolve, reject) => {
-      const db = this.db!;
-      db.run(sql, params, function(err) {
-        if (err) {
-          reject(err);
-        } else {
-          // Update FTS table
-          const ftsSql = `INSERT OR REPLACE INTO files_fts(rowid, name, path, fullPath) VALUES (?, ?, ?, ?)`;
-          const rowId = this?.lastID || 1;
-          db.run(ftsSql, [rowId, file.name, file.path, file.fullPath], (ftsErr) => {
-            if (ftsErr) reject(ftsErr);
-            else resolve();
-          });
-        }
-      });
-    });
+    try {
+      const stmt = this.db.prepare(sql);
+      const result = stmt.run(params);
+
+      // Update FTS table
+      const ftsSql = `INSERT OR REPLACE INTO files_fts(rowid, name, path, fullPath) VALUES (?, ?, ?, ?)`;
+      const ftsStmt = this.db.prepare(ftsSql);
+      ftsStmt.run([result.lastInsertRowid || 1, file.name, file.path, file.fullPath]);
+    } catch (error) {
+      console.error('Error inserting file:', error);
+      throw error;
+    }
   }
 
   async insertFiles(files: FileItem[]): Promise<void> {
@@ -134,85 +121,45 @@ export class DatabaseService {
 
     console.log(`Inserting ${files.length} files into database...`);
 
-    return new Promise((resolve, reject) => {
-      const db = this.db!;
+    const sql = `
+      INSERT OR REPLACE INTO files
+      (id, name, path, fullPath, extension, size, dateModified, dateCreated, isDirectory, type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
 
-      db.serialize(() => {
-        db.run('BEGIN TRANSACTION', (beginErr) => {
-          if (beginErr) {
-            console.error('Failed to begin transaction:', beginErr);
-            reject(beginErr);
-            return;
-          }
+    const ftsSql = `INSERT OR REPLACE INTO files_fts(rowid, name, path, fullPath) VALUES (?, ?, ?, ?)`;
 
-          let completed = 0;
-          let hasError = false;
+    try {
+      const stmt = this.db.prepare(sql);
+      const ftsStmt = this.db.prepare(ftsSql);
 
-          const processFile = (file: FileItem, index: number) => {
-            if (hasError) return;
+      const transaction = this.db.transaction((files: FileItem[]) => {
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          const params = [
+            file.id,
+            file.name,
+            file.path,
+            file.fullPath,
+            file.extension || '',
+            file.size || 0,
+            file.dateModified instanceof Date ? file.dateModified.getTime() : Date.now(),
+            file.dateCreated instanceof Date ? file.dateCreated.getTime() : Date.now(),
+            file.isDirectory ? 1 : 0,
+            file.type || 'unknown'
+          ];
 
-            const params = [
-              file.id,
-              file.name,
-              file.path,
-              file.fullPath,
-              file.extension || '',
-              file.size || 0,
-              file.dateModified instanceof Date ? file.dateModified.getTime() : Date.now(),
-              file.dateCreated instanceof Date ? file.dateCreated.getTime() : Date.now(),
-              file.isDirectory ? 1 : 0,
-              file.type || 'unknown'
-            ];
-
-            const sql = `
-              INSERT OR REPLACE INTO files
-              (id, name, path, fullPath, extension, size, dateModified, dateCreated, isDirectory, type)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `;
-
-            db.run(sql, params, function(err) {
-              if (err && !hasError) {
-                hasError = true;
-                console.error('Failed to insert file:', err);
-                db.run('ROLLBACK');
-                reject(err);
-                return;
-              }
-
-              // Insert into FTS table
-              const ftsRowId = index + 1; // Use index-based ID for FTS
-              const ftsSql = `INSERT OR REPLACE INTO files_fts(rowid, name, path, fullPath) VALUES (?, ?, ?, ?)`;
-
-              db.run(ftsSql, [ftsRowId, file.name, file.path, file.fullPath], (ftsErr) => {
-                if (ftsErr && !hasError) {
-                  hasError = true;
-                  console.error('Failed to insert into FTS:', ftsErr);
-                  db.run('ROLLBACK');
-                  reject(ftsErr);
-                  return;
-                }
-
-                completed++;
-                if (completed === files.length && !hasError) {
-                  db.run('COMMIT', (commitErr) => {
-                    if (commitErr) {
-                      console.error('Failed to commit transaction:', commitErr);
-                      reject(commitErr);
-                    } else {
-                      console.log(`Successfully inserted ${files.length} files`);
-                      resolve();
-                    }
-                  });
-                }
-              });
-            });
-          };
-
-          // Process files sequentially to avoid overwhelming the database
-          files.forEach(processFile);
-        });
+          const result = stmt.run(params);
+          ftsStmt.run([result.lastInsertRowid || (i + 1), file.name, file.path, file.fullPath]);
+        }
       });
-    });
+
+      transaction(files);
+      console.log(`Successfully inserted ${files.length} files`);
+    } catch (error) {
+      console.error('Failed to insert files:', error);
+      throw error;
+    }
   }
 
   async searchFiles(query: string, limit: number = 100, offset: number = 0): Promise<FileItem[]> {
@@ -274,28 +221,28 @@ export class DatabaseService {
       params = [limit, offset];
     }
 
-    return new Promise((resolve, reject) => {
-      this.db!.all(sql, params, (err, rows: any[]) => {
-        if (err) {
-          console.error('Search error:', err);
-          reject(err);
-        } else {
-          const files = rows.map(row => ({
-            id: row.id,
-            name: row.name,
-            path: row.path,
-            fullPath: row.fullPath,
-            extension: row.extension,
-            size: row.size,
-            dateModified: new Date(row.dateModified),
-            dateCreated: new Date(row.dateCreated),
-            isDirectory: row.isDirectory === 1,
-            type: row.type as FileType
-          }));
-          resolve(files);
-        }
-      });
-    });
+    try {
+      const stmt = this.db.prepare(sql);
+      const rows = stmt.all(params);
+
+      const files = rows.map((row: any) => ({
+        id: row.id,
+        name: row.name,
+        path: row.path,
+        fullPath: row.fullPath,
+        extension: row.extension,
+        size: row.size,
+        dateModified: new Date(row.dateModified),
+        dateCreated: new Date(row.dateCreated),
+        isDirectory: row.isDirectory === 1,
+        type: row.type as FileType
+      }));
+
+      return files;
+    } catch (error) {
+      console.error('Search error:', error);
+      throw error;
+    }
   }
 
   private parseSearchQuery(query: string): {
@@ -402,54 +349,49 @@ export class DatabaseService {
   async deleteFile(fullPath: string): Promise<void> {
     if (!this.db) throw new Error('Database not initialized');
 
-    const sql = 'DELETE FROM files WHERE fullPath = ?';
-    
-    return new Promise((resolve, reject) => {
-      this.db!.run(sql, [fullPath], function(err) {
-        if (err) reject(err);
-        else resolve();
-      });
-    });
+    try {
+      const stmt = this.db.prepare('DELETE FROM files WHERE fullPath = ?');
+      stmt.run([fullPath]);
+    } catch (error) {
+      console.error('Error deleting file:', error);
+      throw error;
+    }
   }
 
   async clearAll(): Promise<void> {
     if (!this.db) throw new Error('Database not initialized');
 
-    return new Promise((resolve, reject) => {
-      this.db!.serialize(() => {
-        this.db!.run('DELETE FROM files', (err) => {
-          if (err) reject(err);
-        });
-        this.db!.run('DELETE FROM files_fts', (err) => {
-          if (err) reject(err);
-          else resolve();
-        });
-      });
-    });
+    try {
+      this.db.exec('DELETE FROM files');
+      this.db.exec('DELETE FROM files_fts');
+    } catch (error) {
+      console.error('Error clearing database:', error);
+      throw error;
+    }
   }
 
   async getFileCount(): Promise<number> {
     if (!this.db) throw new Error('Database not initialized');
 
-    return new Promise((resolve, reject) => {
-      this.db!.get('SELECT COUNT(*) as count FROM files', (err, row: any) => {
-        if (err) reject(err);
-        else resolve(row.count);
-      });
-    });
+    try {
+      const stmt = this.db.prepare('SELECT COUNT(*) as count FROM files');
+      const row = stmt.get() as any;
+      return row.count;
+    } catch (error) {
+      console.error('Error getting file count:', error);
+      throw error;
+    }
   }
 
   async close(): Promise<void> {
     if (!this.db) return;
 
-    return new Promise((resolve, reject) => {
-      this.db!.close((err) => {
-        if (err) reject(err);
-        else {
-          this.db = null;
-          resolve();
-        }
-      });
-    });
+    try {
+      this.db.close();
+      this.db = null;
+    } catch (error) {
+      console.error('Error closing database:', error);
+      throw error;
+    }
   }
 }

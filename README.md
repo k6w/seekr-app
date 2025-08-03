@@ -42,7 +42,7 @@ Download the latest release for your platform:
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 20+
 - npm or yarn
 
 ### Setup
@@ -121,7 +121,7 @@ seekr/
 ## 🎨 Tech Stack
 
 - **Frontend**: React 18, TypeScript, Tailwind CSS, shadcn/ui
-- **Backend**: Electron, Node.js, SQLite with FTS5
+- **Backend**: Electron, Node.js, better-sqlite3 with FTS5
 - **Build**: Vite, electron-builder
 - **Search**: Fuse.js for fuzzy matching, SQLite FTS5 for full-text search
 - **File Watching**: Chokidar for real-time file system monitoring

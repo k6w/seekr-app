@@ -122,3 +122,4 @@ console.log('\n💡 Tips:');
 console.log('   - Run this script before pushing to CI to catch issues early');
 console.log('   - Check the release/ directory for your built application');
 console.log('   - Test the built application to ensure it works correctly');
+console.log('   - This project now uses better-sqlite3 for improved performance and Electron compatibility');
