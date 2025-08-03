@@ -22,15 +22,21 @@ A lightning-fast, modern file search application built with Electron, React, and
 
 Download the latest release for your platform:
 
-- **Windows**: [Seekr-Windows-1.0.0-Portable.exe](https://github.com/k6w/seekr/releases/latest)
+- **Windows**:
+  - [Installer (Setup.exe)](https://github.com/k6w/seekr/releases/latest) - Full installation with shortcuts
+  - [Portable (Portable.exe)](https://github.com/k6w/seekr/releases/latest) - No installation required
 - **macOS**: [Seekr-Mac-1.0.0-Installer.dmg](https://github.com/k6w/seekr/releases/latest)
 - **Linux**: [Seekr-Linux-1.0.0.AppImage](https://github.com/k6w/seekr/releases/latest)
 
 ### Installation
 
-1. Download the appropriate file for your operating system
-2. Run the installer or portable executable
-3. Launch Seekr and start searching!
+**Windows:**
+- **Installer**: Download and run the Setup.exe file. Follow the installation wizard to install Seekr with Start Menu and desktop shortcuts.
+- **Portable**: Download the Portable.exe file and run it directly. No installation required - perfect for USB drives or temporary use.
+
+**macOS:** Download the .dmg file, open it, and drag Seekr to your Applications folder.
+
+**Linux:** Download the .AppImage file, make it executable (`chmod +x Seekr-Linux-*.AppImage`), and run it.
 
 ## 🛠️ Development
 
@@ -43,8 +49,8 @@ Download the latest release for your platform:
 
 ```bash
 # Clone the repository
-git clone https://github.com/k6w/seekr.git
-cd seekr/file-search-app\ react-ts
+git clone https://github.com/k6w/seekr-app.git
+cd seekr-app
 
 # Install dependencies
 npm install
@@ -56,22 +62,51 @@ npm run dev
 npm run build
 ```
 
+### Building for Distribution
+
+Seekr supports building for multiple platforms:
+
+```bash
+# Build for current platform
+npm run build
+
+# Build for specific platforms
+npm run build:win     # Windows (portable .exe)
+npm run build:mac     # macOS (.dmg)
+npm run build:linux   # Linux (AppImage)
+
+# Test the build process
+npm run test:build
+
+# Clean build artifacts
+npm run clean
+```
+
+**Platform-specific notes:**
+- **Windows**: Builds both an NSIS installer (.exe) and a portable executable
+  - Installer: Full installation with Start Menu shortcuts, desktop shortcut, and uninstaller
+  - Portable: Single executable that runs without installation
+- **macOS**: Creates a DMG installer (unsigned, may require security settings adjustment)
+- **Linux**: Generates an AppImage (portable, works on most distributions)
+
+**CI/CD**: The project includes GitHub Actions workflows that automatically build for all platforms on push to main/master branches.
+
 ### Project Structure
 
 ```
 seekr/
-├── file-search-app react-ts/
-│   ├── src/                    # React frontend source
-│   │   ├── components/         # React components
-│   │   ├── hooks/             # Custom React hooks
-│   │   ├── lib/               # Utility libraries
-│   │   └── assets/            # Static assets
-│   ├── electron/              # Electron main process
-│   │   ├── main.ts            # Main process entry
-│   │   ├── preload.ts         # Preload script
-│   │   └── services/          # Backend services
-│   ├── public/                # Public assets
-│   └── dist/                  # Build output
+├── src/                    # React frontend
+├── components/         # Reusable UI components
+│   ├── hooks/             # Custom React hooks
+│   ├── lib/               # Utility functions
+
+│   └── assets/            # Static assets
+├── electron/              # Electron main process
+│   ├── main.ts            # Main process entry point
+│   ├── preload.ts         # Preload script for IPC
+│   └── services/          # Backend services
+├── public/                # Public assets
+└── dist/                  # Build output
 ```
 
 ## ⌨️ Keyboard Shortcuts

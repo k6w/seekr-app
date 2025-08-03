@@ -10,50 +10,101 @@ on:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
-    
+
     strategy:
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
+
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '18'
         cache: 'npm'
-        cache-dependency-path: 'file-search-app react-ts/package-lock.json'
-        
+
+    - name: Setup Python (Windows)
+      if: matrix.os == 'windows-latest'
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
     - name: Install dependencies
-      working-directory: 'file-search-app react-ts'
       run: npm ci
-      
-    - name: Build application
-      working-directory: 'file-search-app react-ts'
-      run: npm run build
-      
-    - name: Upload artifacts (Windows)
+
+    - name: Rebuild native dependencies
+      run: npm run postinstall
+
+    - name: Install additional Linux dependencies
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libnss3-dev libatk-bridge2.0-dev libdrm2 libxcomposite1 libxdamage1 libxrandr2 libgbm1 libxss1 libasound2
+
+    - name: Run linting
+      run: npm run lint
+
+    - name: Type check
+      run: npm run tsc
+
+    - name: Build application (Windows)
+      if: matrix.os == 'windows-latest'
+      run: npm run build:win
+      env:
+        CI: true
+
+    - name: Build application (macOS)
+      if: matrix.os == 'macos-latest'
+      run: npm run build:mac
+      env:
+        CI: true
+
+    - name: Build application (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      run: npm run build:linux
+      env:
+        CI: true
+
+    - name: List build output
+      run: |
+        echo "Contents of release directory:"
+        ls -la release/ || echo "No release directory found"
+        echo "Build artifacts found:"
+        find . -name "*Setup.exe" -o -name "*Portable.exe" -o -name "*.dmg" -o -name "*.AppImage" || echo "No build artifacts found"
+
+    - name: Upload artifacts (Windows - Installer)
       if: matrix.os == 'windows-latest'
       uses: actions/upload-artifact@v4
       with:
-        name: seekr-windows
-        path: 'file-search-app react-ts/release/**/*.exe'
-        
+        name: seekr-windows-installer
+        path: 'release/**/*Setup.exe'
+        if-no-files-found: error
+
+    - name: Upload artifacts (Windows - Portable)
+      if: matrix.os == 'windows-latest'
+      uses: actions/upload-artifact@v4
+      with:
+        name: seekr-windows-portable
+        path: 'release/**/*Portable.exe'
+        if-no-files-found: error
+
     - name: Upload artifacts (macOS)
       if: matrix.os == 'macos-latest'
       uses: actions/upload-artifact@v4
       with:
         name: seekr-macos
-        path: 'file-search-app react-ts/release/**/*.dmg'
-        
+        path: 'release/**/*Installer.dmg'
+        if-no-files-found: error
+
     - name: Upload artifacts (Linux)
       if: matrix.os == 'ubuntu-latest'
       uses: actions/upload-artifact@v4
       with:
         name: seekr-linux
-        path: 'file-search-app react-ts/release/**/*.AppImage'
+        path: 'release/**/*.AppImage'
+        if-no-files-found: error
 
   release:
     needs: build
@@ -71,7 +122,8 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         files: |
-          seekr-windows/**
+          seekr-windows-installer/**
+          seekr-windows-portable/**
           seekr-macos/**
           seekr-linux/**
         generate_release_notes: true

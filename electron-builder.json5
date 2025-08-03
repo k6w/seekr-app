@@ -16,9 +16,9 @@
     "dist-electron",
     "node_modules/sqlite3/**/*"
   ],
-  "nodeGypRebuild": false,
+  "nodeGypRebuild": true,
   "buildDependenciesFromSource": false,
-  "npmRebuild": false,
+  "npmRebuild": true,
   "mac": {
     "target": [
       "dmg"
@@ -28,13 +28,18 @@
   "win": {
     "target": [
       {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      },
+      {
         "target": "portable",
         "arch": [
           "x64"
         ]
       }
     ],
-    "artifactName": "Seekr-Windows-${version}-Portable.${ext}",
     "sign": null,
     "signingHashAlgorithms": null,
     "certificateFile": null,
@@ -44,7 +49,23 @@
     "oneClick": false,
     "perMachine": false,
     "allowToChangeInstallationDirectory": true,
-    "deleteAppDataOnUninstall": false
+    "allowElevation": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Seekr",
+    "deleteAppDataOnUninstall": false,
+    "installerIcon": "src/assets/icon.png",
+    "uninstallerIcon": "src/assets/icon.png",
+    "installerHeaderIcon": "src/assets/icon.png",
+    "artifactName": "Seekr-Windows-${version}-Setup.${ext}",
+    "displayLanguageSelector": false,
+    "installerLanguages": ["en_US"],
+    "license": "LICENSE",
+    "runAfterFinish": true,
+    "menuCategory": "Utilities"
+  },
+  "portable": {
+    "artifactName": "Seekr-Windows-${version}-Portable.${ext}"
   },
   "linux": {
     "target": [

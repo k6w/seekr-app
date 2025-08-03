@@ -15,8 +15,8 @@ Thank you for your interest in contributing to Seekr! This document provides gui
 1. Fork the repository on GitHub
 2. Clone your fork locally:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/seekr.git
-   cd seekr/file-search-app\ react-ts
+   git clone https://github.com/YOUR_USERNAME/seekr-app.git
+   cd seekr-app
    ```
 3. Install dependencies:
    ```bash
@@ -141,19 +141,18 @@ Please include:
 
 ```
 seekr/
-├── file-search-app react-ts/
-│   ├── src/                    # React frontend
-│   │   ├── components/         # Reusable UI components
-│   │   ├── hooks/             # Custom React hooks
-│   │   ├── lib/               # Utility functions
-│   │   ├── types/             # TypeScript type definitions
-│   │   └── assets/            # Static assets
-│   ├── electron/              # Electron main process
-│   │   ├── main.ts            # Main process entry point
-│   │   ├── preload.ts         # Preload script for IPC
-│   │   └── services/          # Backend services
-│   ├── public/                # Public assets
-│   └── dist/                  # Build output
+├── src/                    # React frontend
+├── components/         # Reusable UI components
+│   ├── hooks/             # Custom React hooks
+│   ├── lib/               # Utility functions
+
+│   └── assets/            # Static assets
+├── electron/              # Electron main process
+│   ├── main.ts            # Main process entry point
+│   ├── preload.ts         # Preload script for IPC
+│   └── services/          # Backend services
+├── public/                # Public assets
+└── dist/                  # Build output
 ```
 
 ## 🤝 Community

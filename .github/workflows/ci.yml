@@ -27,10 +27,10 @@ jobs:
     
     - name: Run linting
       run: npm run lint
-    
+
     - name: Type check
       run: npm run tsc
-      
+
     - name: Build
       run: npm run build
       env:
