@@ -53,7 +53,8 @@ jobs:
         python-version: '3.11'
 
     - name: Install dependencies
-      run: pnpm install --frozen-lockfile --ignore-scripts
+      run: |
+        pnpm install --ignore-scripts || pnpm install --no-frozen-lockfile --ignore-scripts
       timeout-minutes: 5
 
     - name: Rebuild native dependencies for Electron
