@@ -10,7 +10,7 @@ on:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 20
 
     strategy:
       matrix:
@@ -26,16 +26,23 @@ jobs:
         node-version: '20'
         cache: 'npm'
 
+    - name: Configure npm
+      run: |
+        npm config set cache ~/.npm --global
+        npm config set prefer-offline true --global
+
     - name: Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
 
     - name: Install dependencies
-      run: npm ci
+      run: npm ci --ignore-scripts
+      timeout-minutes: 5
 
-    - name: Rebuild native dependencies
-      run: npm run postinstall
+    - name: Rebuild native dependencies for Electron
+      run: npm run prepare:electron
+      timeout-minutes: 5
 
     - name: Install additional Linux dependencies
       if: matrix.os == 'ubuntu-latest'
