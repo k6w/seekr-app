@@ -4,9 +4,7 @@ import { FileIndexer } from './indexer';
 import { FileWatcher } from './file-watcher';
 import { SearchService } from './search'
 import * as fs from 'fs'
-import * as path from 'path'
-import * as os from 'os';
-import { IpcSearchRequest, IpcIndexRequest, IpcResponse, SearchFilters } from '../../src/types';
+import { IpcSearchRequest, IpcIndexRequest, IpcResponse } from '../../src/types';
 
 export class IpcHandlers {
   private db: DatabaseService;

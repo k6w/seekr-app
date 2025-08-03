@@ -7,7 +7,7 @@ const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3');
 
 export class DatabaseService {
-  private db: any | null = null;
+  private db: any = null;
   private dbPath: string;
 
   constructor() {
@@ -169,9 +169,9 @@ export class DatabaseService {
     const searchTerms = this.parseSearchQuery(query);
 
     let sql: string;
-    let params: any[];
-    let whereConditions: string[] = [];
-    let sqlParams: any[] = [];
+    let params: unknown[];
+    const whereConditions: string[] = [];
+    const sqlParams: unknown[] = [];
 
     // Handle different search operators
     if (searchTerms.type) {

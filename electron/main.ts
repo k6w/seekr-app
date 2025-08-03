@@ -1,5 +1,4 @@
 import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, globalShortcut } from 'electron'
-import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { DatabaseService } from './services/database'
@@ -142,6 +141,7 @@ async function initializeServices() {
 
     // Setup IPC handlers
     ipcHandlers = new IpcHandlers(db, indexer, fileWatcher)
+    // IPC handlers are automatically registered in the constructor
 
     console.log('Services initialized successfully')
   } catch (error) {
