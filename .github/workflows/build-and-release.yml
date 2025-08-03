@@ -10,7 +10,7 @@ on:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     strategy:
       matrix:
@@ -26,7 +26,15 @@ jobs:
         node-version: '20'
         cache: 'npm'
 
-    - name: Configure npm
+    - name: Configure npm (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        npm config set cache C:\npm-cache --global
+        npm config set prefer-offline true --global
+        npm config set maxsockets 1 --global
+
+    - name: Configure npm (Unix)
+      if: matrix.os != 'windows-latest'
       run: |
         npm config set cache ~/.npm --global
         npm config set prefer-offline true --global
@@ -36,9 +44,12 @@ jobs:
       with:
         python-version: '3.11'
 
+    - name: Clean npm cache
+      run: npm cache clean --force
+
     - name: Install dependencies
-      run: npm ci --ignore-scripts
-      timeout-minutes: 5
+      run: npm ci --ignore-scripts --no-audit --no-fund
+      timeout-minutes: 8
 
     - name: Rebuild native dependencies for Electron
       run: npm run prepare:electron
@@ -47,8 +58,9 @@ jobs:
     - name: Install additional Linux dependencies
       if: matrix.os == 'ubuntu-latest'
       run: |
-        sudo apt-get update
-        sudo apt-get install -y libnss3-dev libatk-bridge2.0-dev libdrm2 libxcomposite1 libxdamage1 libxrandr2 libgbm1 libxss1 libasound2t64
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends libnss3-dev libatk-bridge2.0-dev libdrm2 libxcomposite1 libxdamage1 libxrandr2 libgbm1 libxss1 libasound2t64
+      timeout-minutes: 3
 
     - name: Run linting
       run: npm run lint
