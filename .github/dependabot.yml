@@ -1,0 +1,21 @@
+# Dependabot configuration file
+version: 2
+updates:
+  # Enable version updates for npm
+  - package-ecosystem: "npm"
+    # Look for `package.json` and `lock` files in the `root` directory
+    directory: "/"
+    # Check for updates once a week
+    schedule:
+      interval: "weekly"
+    # Limit the number of open pull requests for version updates
+    open-pull-requests-limit: 10
+    # Add labels on pull requests for dependencies
+    labels:
+      - "dependencies"
+      - "automerge"
+    # Specify versioning strategy
+    versioning-strategy: auto
+    # Allow up-to-date dependencies to be maintained
+    allow:
+      - dependency-type: "all"

@@ -1,0 +1,55 @@
+// @see - https://www.electron.build/configuration/configuration
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "com.k6w.seekr",
+  "asar": true,
+  "productName": "Seekr",
+  "forceCodeSigning": false,
+  "afterSign": null,
+  "afterAllArtifactBuild": null,
+  "icon": "src/assets/icon.png",
+  "directories": {
+    "output": "release/${version}"
+  },
+  "files": [
+    "dist",
+    "dist-electron",
+    "node_modules/sqlite3/**/*"
+  ],
+  "nodeGypRebuild": false,
+  "buildDependenciesFromSource": false,
+  "npmRebuild": false,
+  "mac": {
+    "target": [
+      "dmg"
+    ],
+    "artifactName": "Seekr-Mac-${version}-Installer.${ext}"
+  },
+  "win": {
+    "target": [
+      {
+        "target": "portable",
+        "arch": [
+          "x64"
+        ]
+      }
+    ],
+    "artifactName": "Seekr-Windows-${version}-Portable.${ext}",
+    "sign": null,
+    "signingHashAlgorithms": null,
+    "certificateFile": null,
+    "certificatePassword": null
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "deleteAppDataOnUninstall": false
+  },
+  "linux": {
+    "target": [
+      "AppImage"
+    ],
+    "artifactName": "Seekr-Linux-${version}.${ext}"
+  }
+}

@@ -1,0 +1,81 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: 'file-search-app react-ts/package-lock.json'
+        
+    - name: Install dependencies
+      working-directory: 'file-search-app react-ts'
+      run: npm ci
+      
+    - name: Build application
+      working-directory: 'file-search-app react-ts'
+      run: npm run build
+      
+    - name: Upload artifacts (Windows)
+      if: matrix.os == 'windows-latest'
+      uses: actions/upload-artifact@v4
+      with:
+        name: seekr-windows
+        path: 'file-search-app react-ts/release/**/*.exe'
+        
+    - name: Upload artifacts (macOS)
+      if: matrix.os == 'macos-latest'
+      uses: actions/upload-artifact@v4
+      with:
+        name: seekr-macos
+        path: 'file-search-app react-ts/release/**/*.dmg'
+        
+    - name: Upload artifacts (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      uses: actions/upload-artifact@v4
+      with:
+        name: seekr-linux
+        path: 'file-search-app react-ts/release/**/*.AppImage'
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          seekr-windows/**
+          seekr-macos/**
+          seekr-linux/**
+        generate_release_notes: true
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

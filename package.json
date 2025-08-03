@@ -1,0 +1,75 @@
+{
+  "name": "seekr",
+  "private": false,
+  "version": "1.0.0",
+  "description": "A powerful file search application with instant search, fuzzy matching, and advanced filtering",
+  "author": "k6w",
+  "homepage": "https://github.com/k6w/seekr",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/k6w/seekr.git"
+  },
+  "bugs": {
+    "url": "https://github.com/k6w/seekr/issues"
+  },
+  "license": "MIT",
+  "keywords": [
+    "file-search",
+    "electron",
+    "desktop-app",
+    "search",
+    "fuzzy-search"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build && electron-builder",
+    "build:win": "tsc && vite build && electron-builder --win",
+    "build:mac": "tsc && vite build && electron-builder --mac",
+    "build:linux": "tsc && vite build && electron-builder --linux",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "lint:fix": "eslint . --ext ts,tsx --fix",
+    "preview": "vite preview",
+    "clean": "rimraf dist dist-electron release",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "@radix-ui/react-slot": "^1.2.3",
+    "@tailwindcss/typography": "^0.5.16",
+    "autoprefixer": "^10.4.21",
+    "chokidar": "^4.0.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "fuse.js": "^7.1.0",
+    "lucide-react": "^0.536.0",
+    "postcss": "^8.5.6",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "sqlite3": "^5.1.7",
+    "tailwind-merge": "^3.3.1",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.1.0",
+    "@types/react": "^18.2.64",
+    "@types/react-dom": "^18.2.21",
+    "@types/sqlite3": "^3.1.11",
+    "@types/uuid": "^10.0.0",
+    "@typescript-eslint/eslint-plugin": "^7.1.1",
+    "@typescript-eslint/parser": "^7.1.1",
+    "@vitejs/plugin-react": "^4.2.1",
+    "electron": "^30.0.1",
+    "electron-builder": "^24.13.3",
+    "electron-rebuild": "^3.2.9",
+    "eslint": "^8.57.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "eslint-plugin-react-refresh": "^0.4.5",
+    "rimraf": "^6.0.1",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.2.2",
+    "vite": "^5.1.6",
+    "vite-plugin-electron": "^0.28.6",
+    "vite-plugin-electron-renderer": "^0.14.5"
+  },
+  "main": "dist-electron/main.js"
+}

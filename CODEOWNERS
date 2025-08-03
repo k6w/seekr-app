@@ -1,0 +1,23 @@
+# Global code owners
+* @k6w
+
+# Frontend components
+/src/components/ @k6w
+/src/hooks/ @k6w
+/src/lib/ @k6w
+
+# Electron main process
+/electron/ @k6w
+
+# Build and configuration
+/electron-builder.json5 @k6w
+/vite.config.ts @k6w
+/package.json @k6w
+
+# GitHub workflows and templates
+/.github/ @k6w
+
+# Documentation
+/README.md @k6w
+/CONTRIBUTING.md @k6w
+/CHANGELOG.md @k6w
