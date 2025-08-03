@@ -2,8 +2,6 @@
 
 A lightning-fast, modern file search application built with Electron, React, and TypeScript. Seekr provides instant search results with fuzzy matching, beautiful glassmorphism UI, and powerful filtering capabilities.
 
-![Seekr Screenshot](https://via.placeholder.com/800x500/1a1a1a/ffffff?text=Seekr+Screenshot)
-
 ## ✨ Features
 
 - **⚡ Lightning Fast Search**: Instant search results with SQLite FTS5 full-text search
