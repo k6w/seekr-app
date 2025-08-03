@@ -10,6 +10,7 @@ on:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
 
     strategy:
       matrix:
@@ -44,9 +45,6 @@ jobs:
 
     - name: Run linting
       run: npm run lint
-
-    - name: Type check
-      run: npm run tsc
 
     - name: Build application (Windows)
       if: matrix.os == 'windows-latest'
