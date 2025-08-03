@@ -16,7 +16,8 @@ A lightning-fast, modern file search application built with Electron, React, and
 
 ## 🚀 Quick Start
 
-### Download
+### This method is currently unavailable
+```### Download
 
 Download the latest release for your platform:
 
@@ -35,6 +36,7 @@ Download the latest release for your platform:
 **macOS:** Download the .dmg file, open it, and drag Seekr to your Applications folder.
 
 **Linux:** Download the .AppImage file, make it executable (`chmod +x Seekr-Linux-*.AppImage`), and run it.
+```
 
 ## 🛠️ Development
 
