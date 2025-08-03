@@ -12,6 +12,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
 
+    env:
+      FORCE_COLOR: 0
+      CI: true
+
     strategy:
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
@@ -47,9 +51,21 @@ jobs:
     - name: Clean npm cache
       run: npm cache clean --force
 
-    - name: Install dependencies
+    - name: Install dependencies (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
+        if ($LASTEXITCODE -ne 0) {
+          Remove-Item -Recurse -Force node_modules -ErrorAction SilentlyContinue
+          npm ci --ignore-scripts --no-audit --no-fund
+        }
+      timeout-minutes: 10
+      shell: pwsh
+
+    - name: Install dependencies (Unix)
+      if: matrix.os != 'windows-latest'
       run: npm ci --ignore-scripts --no-audit --no-fund
-      timeout-minutes: 8
+      timeout-minutes: 6
 
     - name: Rebuild native dependencies for Electron
       run: npm run prepare:electron
@@ -59,8 +75,8 @@ jobs:
       if: matrix.os == 'ubuntu-latest'
       run: |
         sudo apt-get update -qq
-        sudo apt-get install -y --no-install-recommends libnss3-dev libatk-bridge2.0-dev libdrm2 libxcomposite1 libxdamage1 libxrandr2 libgbm1 libxss1 libasound2t64
-      timeout-minutes: 3
+        sudo apt-get install -y --no-install-recommends libnss3-dev libgbm1 libxss1 libasound2t64
+      timeout-minutes: 2
 
     - name: Run linting
       run: npm run lint
