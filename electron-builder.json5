@@ -16,9 +16,9 @@
     "dist-electron",
     "node_modules/better-sqlite3/**/*"
   ],
-  "nodeGypRebuild": false,
+  "nodeGypRebuild": true,
   "buildDependenciesFromSource": false,
-  "npmRebuild": false,
+  "npmRebuild": true,
   "mac": {
     "target": [
       "dmg"

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, globalShortcut } from 'electron'
+import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, globalShortcut, dialog } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { DatabaseService } from './services/database'
@@ -146,6 +146,12 @@ async function initializeServices() {
     console.log('Services initialized successfully')
   } catch (error) {
     console.error('Failed to initialize services:', error)
+    // Show error dialog to user
+    dialog.showErrorBox(
+      'Initialization Error',
+      `Failed to initialize File Search services:\n\n${error instanceof Error ? error.message : String(error)}\n\nThe application may not work correctly. Please try restarting or check the logs.`
+    )
+    throw error
   }
 }
 
@@ -276,17 +282,23 @@ ipcMain.handle('app-quit', () => {
 
 // Global shortcut for showing app
 app.whenReady().then(async () => {
-  await initializeServices()
-  createWindow()
-  createTray()
+  try {
+    await initializeServices()
+    createWindow()
+    createTray()
 
-  // Register global shortcut
-  globalShortcut.register('CmdOrCtrl+Shift+F', () => {
-    if (win?.isVisible()) {
-      win.hide()
-    } else {
-      win?.show()
-      win?.focus()
-    }
-  })
+    // Register global shortcut
+    globalShortcut.register('CmdOrCtrl+Shift+F', () => {
+      if (win?.isVisible()) {
+        win.hide()
+      } else {
+        win?.show()
+        win?.focus()
+      }
+    })
+  } catch (error) {
+    console.error('Failed to start application:', error)
+    // Exit the app if initialization fails
+    app.quit()
+  }
 })
