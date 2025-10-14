@@ -94,11 +94,12 @@ jobs:
         CI: true
 
     - name: List build output
+      shell: bash
       run: |
         echo "Contents of release directory:"
-        ls -la release/ || echo "No release directory found"
+        ls -la release/ 2>/dev/null || echo "No release directory found"
         echo "Build artifacts found:"
-        find . -name "*Setup.exe" -o -name "*Portable.exe" -o -name "*.dmg" -o -name "*.AppImage" || echo "No build artifacts found"
+        find . \( -name "*Setup.exe" -o -name "*Portable.exe" -o -name "*.dmg" -o -name "*.AppImage" \) 2>/dev/null || echo "No build artifacts found"
 
     - name: Upload artifacts (Windows - Installer)
       if: matrix.os == 'windows-latest'
