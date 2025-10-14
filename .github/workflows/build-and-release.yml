@@ -73,14 +73,14 @@ jobs:
 
     - name: Build application (Windows)
       if: matrix.os == 'windows-latest'
-      run: pnpm run build:win -- --publish never
+      run: pnpm run build:win
       timeout-minutes: 15
       env:
         CI: true
 
     - name: Build application (macOS)
       if: matrix.os == 'macos-latest'
-      run: pnpm run build:mac -- --publish never
+      run: pnpm run build:mac
       timeout-minutes: 15
       env:
         CI: true
@@ -88,7 +88,7 @@ jobs:
 
     - name: Build application (Linux)
       if: matrix.os == 'ubuntu-latest'
-      run: pnpm run build:linux -- --publish never
+      run: pnpm run build:linux
       timeout-minutes: 15
       env:
         CI: true
