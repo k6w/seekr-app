@@ -3,6 +3,8 @@
 Instant file search for macOS, Windows and Linux. Press a hotkey, type a few
 characters, open the file.
 
+![Seekr searching for "report"](docs/screenshots/main-dark.png)
+
 ## What it does
 
 - **Search as you type** over an index of your files, backed by SQLite's
@@ -15,6 +17,24 @@ characters, open the file.
   re-index to find a file you saved a second ago.
 - **Ranked results.** Exact name, then name-without-extension, prefix, word
   boundary, substring — with recent files lifted and build directories sunk.
+
+## Screens
+
+**The palette.** Summoned from anywhere with `⌘⇧F`, floats over full-screen
+apps, and sizes itself to the results. Matches are marked in the one accent
+colour the design spends anywhere; the bar in the gutter is the keyboard cursor.
+
+![The hotkey palette](docs/screenshots/overlay.png)
+
+**Light and dark.** Both are first-class — warm paper and photographic ink,
+with the accent darkened in light mode to hold its contrast.
+
+![Seekr in light mode](docs/screenshots/main-light.png)
+
+**Settings.** Real numbers from the engine, and the shortcuts written with the
+platform's own glyphs.
+
+![Settings](docs/screenshots/settings.png)
 
 ## Install
 
@@ -106,11 +126,16 @@ Two extra checks worth knowing about:
 ```bash
 node scripts/smoke-packaged.cjs   # launch the built app, assert the engine answers
 node scripts/bench-search.mjs     # measure query latency against a synthetic corpus
+pnpm screenshots                  # regenerate the images above
 ```
 
 The smoke test is the one that matters before a release. Native modules load
 differently from an asar archive than they do in development, so "the build
 produced a file" is not evidence that the app runs.
+
+`pnpm screenshots` captures through `webContents.capturePage()` against a
+throwaway index, so it never touches your real one and never takes over your
+screen or keyboard.
 
 ## Licence
 

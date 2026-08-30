@@ -34,7 +34,8 @@
     "test:watch": "vitest",
     "preview": "vite preview",
     "clean": "rimraf dist dist-electron release",
-    "lint:strict": "eslint electron tests --ext ts --report-unused-disable-directives --max-warnings 0"
+    "lint:strict": "eslint electron tests --ext ts --report-unused-disable-directives --max-warnings 0",
+    "screenshots": "electron scripts/screenshots.cjs"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.2.3",

@@ -105,9 +105,13 @@ export function OverlayApp() {
   return (
     <div
       ref={cardRef}
-      // h-fit, not h-screen: the window sizes to this element, not the other
-      // way round.
-      className="animate-overlay-in flex max-h-screen w-full flex-col overflow-hidden rounded-xl bg-surface text-foreground shadow-overlay"
+      /*
+       * Deliberately unconstrained in height: the WINDOW sizes to this card,
+       * so capping the card at the viewport would make it impossible for it to
+       * ever grow -- it could only ever report the height it already had.
+       * The result list caps itself instead.
+       */
+      className="animate-overlay-in flex w-full flex-col overflow-hidden rounded-xl bg-surface text-foreground shadow-overlay"
     >
       {/* The window has no title bar, so the query strip is also the drag handle. */}
       <div className="drag-region flex items-center gap-2.5 px-3.5 py-3">

@@ -6,8 +6,8 @@ import { IpcEvent } from '../ipc/channels'
 const WIDTH = 680
 const MIN_HEIGHT = 96
 const MAX_HEIGHT = 560
-/** Tall enough for the input, ~8 rows and the hint strip. */
-const HEIGHT = 468
+/** Just the query strip and hints; it grows as results arrive. */
+const HEIGHT = 96
 /** Sits above centre, where the eye already is. Spotlight uses roughly this. */
 const VERTICAL_ANCHOR = 0.22
 
