@@ -8,11 +8,13 @@ packages:
 # Dependency build/install scripts are blocked unless listed.
 #   esbuild / electron-winstaller  fetch their platform binaries
 #   electron                       downloads its runtime
-#   better-sqlite3                 ships N-API prebuilds, so nothing is
-#                                  actually compiled; listed only so the
-#                                  install does not fail on "ignored builds"
+#   better-sqlite3                 explicitly NOT built: it ships N-API
+#                                  prebuilds, and it has a binding.gyp, so
+#                                  pnpm would otherwise run node-gyp for it --
+#                                  which fails on Windows runners that have no
+#                                  Visual Studio, and is wasted work elsewhere
 allowBuilds:
-  better-sqlite3: true
+  better-sqlite3: false
   electron: true
   electron-winstaller: true
   esbuild: true

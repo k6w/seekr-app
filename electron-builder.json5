@@ -82,11 +82,7 @@
   },
 
   "dmg": {
-    "artifactName": "Seekr-mac-${version}-${arch}.${ext}",
-    "contents": [
-      { "x": 130, "y": 220, "type": "file" },
-      { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
-    ]
+    "artifactName": "Seekr-mac-${version}-${arch}.${ext}"
   },
 
   "win": {

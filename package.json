@@ -3,7 +3,10 @@
   "private": false,
   "version": "2.0.0",
   "description": "Instant file search for macOS, Windows and Linux",
-  "author": "k6w",
+  "author": {
+    "name": "k6w",
+    "email": "k6w@users.noreply.github.com"
+  },
   "homepage": "https://github.com/k6w/seekr-app",
   "repository": {
     "type": "git",
