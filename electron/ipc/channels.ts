@@ -1,25 +1,27 @@
 /**
  * Single source of truth for every IPC channel name.
  *
- * Main, preload, and the renderer all import from here. Nothing else may
- * invent a channel string: the preload allowlist is derived from these
- * objects, so a channel that is not listed here cannot be reached from the
- * renderer at all.
+ * Main, preload and the renderer all import from here. Nothing else may invent
+ * a channel string: the preload's allowlist is derived from these objects, so
+ * a channel not listed here cannot be reached from the renderer at all.
+ *
+ * Search and indexing are deliberately absent -- they travel over the engine
+ * MessagePort, not through main.
  */
 
 /** Request/response channels. Renderer -> main via `ipcRenderer.invoke`. */
 export const IpcChannel = {
-  Search: 'seekr:search',
-  IndexStart: 'seekr:index:start',
-  IndexStop: 'seekr:index:stop',
-  IndexProgress: 'seekr:index:progress',
-  IndexCount: 'seekr:index:count',
-
   FileOpen: 'seekr:file:open',
   FileReveal: 'seekr:file:reveal',
+  FileCopyPath: 'seekr:file:copy-path',
+  FileTrash: 'seekr:file:trash',
+  FileStartDrag: 'seekr:file:start-drag',
 
-  SystemDrives: 'seekr:system:drives',
+  SystemRoots: 'seekr:system:roots',
   SystemInfo: 'seekr:system:info',
+  SystemOpenFdaSettings: 'seekr:system:open-fda-settings',
+
+  IndexRootsChanged: 'seekr:index:roots-changed',
 
   WindowMinimize: 'seekr:window:minimize',
   WindowMaximizeToggle: 'seekr:window:maximize-toggle',
@@ -30,18 +32,7 @@ export const IpcChannel = {
 
 /** Push channels. Main -> renderer via `webContents.send`. */
 export const IpcEvent = {
-  IndexProgress: 'seekr:evt:index-progress',
-  IndexComplete: 'seekr:evt:index-complete',
-  IndexError: 'seekr:evt:index-error',
-
-  FileAdded: 'seekr:evt:file-added',
-  FileChanged: 'seekr:evt:file-changed',
-  FileRemoved: 'seekr:evt:file-removed',
-  WatcherReady: 'seekr:evt:watcher-ready',
-  WatcherStopped: 'seekr:evt:watcher-stopped',
-
   WindowMaximizedChanged: 'seekr:evt:window-maximized-changed',
-
   FocusSearch: 'seekr:evt:focus-search',
   OpenSettings: 'seekr:evt:open-settings',
   StartIndexingFromTray: 'seekr:evt:start-indexing-from-tray',

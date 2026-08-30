@@ -1,14 +1,19 @@
-import { BrowserWindow, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
-import { DatabaseService } from './database'
-import { FileIndexer } from './indexer'
-import { FileWatcher } from './file-watcher'
-import { SearchService } from './search'
+import {
+  BrowserWindow,
+  app,
+  clipboard,
+  ipcMain,
+  nativeImage,
+  shell,
+  type IpcMainInvokeEvent,
+} from 'electron'
+import path from 'node:path'
+import log from 'electron-log/main'
 import { SettingsStore } from './settings'
 import { getSelectableRoots, getSystemInfo } from './platform'
 import { PathGuard } from '../security/path-guard'
-import { IpcChannel, IpcEvent } from '../ipc/channels'
-import type { IpcResult } from '../ipc/api'
-import type { IpcIndexRequest, IpcSearchRequest } from '../../src/types'
+import { IpcChannel } from '../ipc/channels'
+import type { IpcResult, SystemInfo } from '../ipc/api'
 
 const ok = <T>(data: T): IpcResult<T> => ({ ok: true, data })
 const fail = (error: unknown): IpcResult<never> => ({
@@ -16,24 +21,30 @@ const fail = (error: unknown): IpcResult<never> => ({
   error: error instanceof Error ? error.message : 'Unknown error',
 })
 
+/** macOS deep link to the exact settings pane. There is no API to request FDA. */
+const FULL_DISK_ACCESS_URL =
+  'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles'
+
+/**
+ * Everything main still owns after the engine split: the shell verbs, the
+ * permission prompts, and the root allowlist the path guard reads.
+ *
+ * Search and indexing are deliberately absent -- they travel renderer to
+ * engine over a MessagePort and never pass through here.
+ */
 export class IpcHandlers {
-  private readonly searchService: SearchService
   private readonly pathGuard: PathGuard
-  private readonly disposers: Array<() => void> = []
 
   constructor(
-    private readonly db: DatabaseService,
-    private readonly indexer: FileIndexer,
-    private readonly fileWatcher: FileWatcher,
     private readonly settings: SettingsStore,
+    /** Asks the engine whether a path is present in the index. */
+    isIndexed: (fullPath: string) => Promise<boolean>,
   ) {
-    this.searchService = new SearchService(db)
     this.pathGuard = new PathGuard({
       getIndexedRoots: () => this.settings.get().indexedPaths,
-      isIndexed: (p) => this.db.hasPath(p),
+      isIndexed,
     })
-    this.registerHandlers()
-    this.forwardEvents()
+    this.register()
   }
 
   /**
@@ -44,7 +55,6 @@ export class IpcHandlers {
   private isTrustedSender(event: IpcMainInvokeEvent): boolean {
     if (BrowserWindow.fromWebContents(event.sender) === null) return false
     const frame = event.senderFrame
-    // `senderFrame` is null if the frame was destroyed mid-call.
     return frame === null || frame.parent === null
   }
 
@@ -59,123 +69,90 @@ export class IpcHandlers {
       try {
         return await fn(event, ...(args as Args))
       } catch (error) {
-        console.error(`IPC handler failed on ${channel}:`, error)
+        log.error(`IPC handler failed on ${channel}:`, error)
         return fail(error)
       }
     })
   }
 
-  private registerHandlers(): void {
-    this.handle(IpcChannel.Search, async (_e, request: IpcSearchRequest) => {
-      const { query, filters, limit = 100, offset = 0 } = request ?? {}
-      return ok(await this.searchService.search(query ?? '', filters ?? {}, limit, offset))
-    })
-
-    this.handle(IpcChannel.IndexStart, async (_e, request: IpcIndexRequest) => {
-      if (this.indexer.isCurrentlyIndexing()) {
-        return fail(new Error('Indexing already in progress'))
-      }
-
-      const paths = (request?.paths ?? []).filter(
-        (p): p is string => typeof p === 'string' && p.trim().length > 0,
-      )
-      if (paths.length === 0) return fail(new Error('No valid paths provided for indexing'))
-
-      const excludePaths = Array.isArray(request?.excludePaths) ? request.excludePaths : []
-
-      // Persist BEFORE indexing starts. These roots are the allowlist PathGuard
-      // consults, so they must be durable even if indexing is interrupted.
-      this.settings.update({ indexedPaths: paths, excludedPaths: excludePaths })
-
-      this.indexer.startIndexing(paths, excludePaths).catch((error) => {
-        console.error('Indexing error:', error)
-        this.broadcast(IpcEvent.IndexError, error instanceof Error ? error.message : String(error))
-      })
-
-      try {
-        await this.fileWatcher.startWatching(paths, excludePaths)
-      } catch (watchError) {
-        // A failed watcher degrades freshness but must not fail the index run.
-        console.warn('File watching failed to start:', watchError)
-      }
-
-      return ok(undefined)
-    })
-
-    this.handle(IpcChannel.IndexStop, async () => {
-      this.indexer.stopIndexing()
-      await this.fileWatcher.stopWatching()
-      return ok(undefined)
-    })
-
-    this.handle(IpcChannel.IndexProgress, () => ok(this.indexer.getProgress()))
-
-    this.handle(IpcChannel.IndexCount, async () => ok(await this.db.getFileCount()))
-
-    // Both file actions hand a path to the OS shell, so both go through the
-    // guard. See electron/security/path-guard.ts for why.
+  private register(): void {
+    // Every verb below hands a path to the OS, so every one goes through the
+    // guard first. See electron/security/path-guard.ts for why.
     this.handle(IpcChannel.FileOpen, async (_e, filePath: unknown) => {
       const verdict = await this.pathGuard.validate(filePath)
       if (!verdict.ok) return fail(new Error(verdict.reason))
 
-      const message = await shell.openPath(verdict.path)
       // openPath resolves with a non-empty string on failure rather than rejecting.
+      const message = await shell.openPath(verdict.path)
       return message ? fail(new Error(message)) : ok(undefined)
     })
 
     this.handle(IpcChannel.FileReveal, async (_e, filePath: unknown) => {
       const verdict = await this.pathGuard.validate(filePath)
       if (!verdict.ok) return fail(new Error(verdict.reason))
-
       shell.showItemInFolder(verdict.path)
       return ok(undefined)
     })
 
-    this.handle(IpcChannel.SystemDrives, async () => ok(await getSelectableRoots()))
+    this.handle(IpcChannel.FileCopyPath, async (_e, filePath: unknown) => {
+      const verdict = await this.pathGuard.validate(filePath)
+      if (!verdict.ok) return fail(new Error(verdict.reason))
+      clipboard.writeText(verdict.path)
+      return ok(undefined)
+    })
 
-    this.handle(IpcChannel.SystemInfo, () => ok(getSystemInfo()))
+    this.handle(IpcChannel.FileTrash, async (_e, filePath: unknown) => {
+      const verdict = await this.pathGuard.validate(filePath)
+      if (!verdict.ok) return fail(new Error(verdict.reason))
+      // Unlike openPath, trashItem rejects on failure.
+      await shell.trashItem(verdict.path)
+      return ok(undefined)
+    })
+
+    this.handle(IpcChannel.FileStartDrag, async (event, filePath: unknown) => {
+      const verdict = await this.pathGuard.validate(filePath)
+      if (!verdict.ok) return fail(new Error(verdict.reason))
+
+      // startDrag needs a real icon; passing an empty one throws.
+      const icon = await app.getFileIcon(verdict.path, { size: 'normal' }).catch(() => null)
+      event.sender.startDrag({ file: verdict.path, icon: icon ?? nativeImage.createEmpty() })
+      return ok(undefined)
+    })
+
+    this.handle(IpcChannel.SystemRoots, async () => ok(await getSelectableRoots()))
+
+    this.handle(IpcChannel.SystemInfo, () => ok<SystemInfo>(getSystemInfo()))
+
+    this.handle(IpcChannel.SystemOpenFdaSettings, async () => {
+      if (process.platform !== 'darwin') return fail(new Error('macOS only'))
+      await shell.openExternal(FULL_DISK_ACCESS_URL)
+      return ok(undefined)
+    })
+
+    /**
+     * Records which roots are being indexed.
+     *
+     * This is the allowlist PathGuard consults, so main persists it before the
+     * engine starts finding files there. Renderer localStorage -- where
+     * settings used to live -- is the wrong owner for a security-relevant list.
+     */
+    this.handle(IpcChannel.IndexRootsChanged, (_e, roots: unknown, excludePaths: unknown) => {
+      const paths = Array.isArray(roots)
+        ? roots.filter((p): p is string => typeof p === 'string' && path.isAbsolute(p))
+        : []
+      if (paths.length === 0) return fail(new Error('No valid absolute roots supplied'))
+
+      this.settings.update({
+        indexedPaths: paths,
+        excludedPaths: Array.isArray(excludePaths)
+          ? excludePaths.filter((p): p is string => typeof p === 'string')
+          : [],
+      })
+      return ok(undefined)
+    })
   }
 
-  private broadcast(channel: string, ...args: unknown[]): void {
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (window.isDestroyed() || window.webContents.isDestroyed()) continue
-      window.webContents.send(channel, ...args)
-    }
-  }
-
-  /** Bridges indexer/watcher EventEmitter output onto renderer channels. */
-  private forwardEvents(): void {
-    const relay = (
-      source: FileIndexer | FileWatcher,
-      sourceEvent: string,
-      channel: string,
-      map: (...args: never[]) => unknown[] = (...args: unknown[]) => args,
-    ) => {
-      const listener = (...args: unknown[]) => this.broadcast(channel, ...map(...(args as never[])))
-      source.on(sourceEvent, listener)
-      this.disposers.push(() => source.off(sourceEvent, listener))
-    }
-
-    relay(this.indexer, 'progress', IpcEvent.IndexProgress)
-    relay(this.indexer, 'complete', IpcEvent.IndexComplete)
-    relay(this.indexer, 'error', IpcEvent.IndexError, (error: Error) => [error?.message ?? String(error)])
-
-    relay(this.fileWatcher, 'fileAdded', IpcEvent.FileAdded)
-    relay(this.fileWatcher, 'fileChanged', IpcEvent.FileChanged)
-    relay(this.fileWatcher, 'fileRemoved', IpcEvent.FileRemoved)
-    // Directories are files with isDirectory set; the renderer does not need
-    // separate channels for them.
-    relay(this.fileWatcher, 'directoryAdded', IpcEvent.FileAdded)
-    relay(this.fileWatcher, 'directoryRemoved', IpcEvent.FileRemoved)
-    relay(this.fileWatcher, 'watcherReady', IpcEvent.WatcherReady)
-    relay(this.fileWatcher, 'watchingStopped', IpcEvent.WatcherStopped)
-  }
-
-  /** Removes every handler and listener. Called on app shutdown. */
   dispose(): void {
-    for (const channel of Object.values(IpcChannel)) {
-      ipcMain.removeHandler(channel)
-    }
-    for (const off of this.disposers.splice(0)) off()
+    for (const channel of Object.values(IpcChannel)) ipcMain.removeHandler(channel)
   }
 }

@@ -1,21 +1,21 @@
 /**
- * The typed contract between the renderer and the main process.
+ * The typed contract between the renderer and the rest of the app.
  *
- * `SeekrApi` is the exact shape exposed on `window.seekr` by the preload.
- * Both sides import it, so a handler and its caller cannot drift.
+ * Two transports sit behind this one object:
+ *
+ *   - **Search and indexing** go over a MessagePort straight to the engine
+ *     `utilityProcess`. They never touch the main process, so a crawl or a
+ *     large result batch cannot stall the window.
+ *   - **Shell verbs, windows and permissions** go to main over IPC, because
+ *     those are the things main legitimately owns -- and because every path
+ *     must pass the guard before it reaches the OS.
  */
-import type {
-  FileItem,
-  IndexingProgress,
-  IpcIndexRequest,
-  IpcSearchRequest,
-  SearchResult,
-} from '../../src/types'
+import type { SearchRow } from '../engine/protocol'
+import type { IndexProgressPayload, SearchResultPage } from '../engine/client'
 
-/**
- * Discriminated result. Replaces the old `IpcResponse<T = any>`, where every
- * call site had to cast and `success` told you nothing about `data`.
- */
+export type { SearchRow, SearchResultPage, IndexProgressPayload }
+
+/** Discriminated result. Replaces `IpcResponse<T = any>`, which told callers nothing. */
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
 export interface SystemInfo {
@@ -23,44 +23,64 @@ export interface SystemInfo {
   isMac: boolean
   isWindows: boolean
   isLinux: boolean
-  /** Windows 11 build 22000+, where mica and rounded corners are available. */
+  /** Windows 11 build 22000+, where mica and rounded corners exist. */
   supportsMica: boolean
   appVersion: string
 }
 
-/** Unsubscribe handle returned by every event subscription. */
+export interface EngineStats {
+  fileCount: number
+  databaseBytes: number
+  indexedRoots: string[]
+}
+
 export type Unsubscribe = () => void
 
+export interface SearchOptions {
+  limit?: number
+  /** Opaque keyset token from the previous page. Never an offset. */
+  cursor?: string
+  /** Also compute the true total. One extra pass, so opt in. */
+  wantTotal?: boolean
+}
+
 export interface SeekrApi {
-  search(request: IpcSearchRequest): Promise<IpcResult<SearchResult>>
+  /** True once the engine port has arrived. */
+  isEngineReady(): boolean
+
+  search(query: string, options?: SearchOptions): Promise<SearchResultPage>
 
   index: {
-    start(request: IpcIndexRequest): Promise<IpcResult<void>>
-    stop(): Promise<IpcResult<void>>
-    progress(): Promise<IpcResult<IndexingProgress>>
-    count(): Promise<IpcResult<number>>
+    start(paths?: string[], excludePaths?: string[]): Promise<void>
+    stop(): Promise<void>
+    count(): Promise<number>
+    stats(): Promise<EngineStats>
   }
 
   file: {
-    /** Opens with the OS default handler. Rejects paths not present in the index. */
+    /** Opens with the OS default handler. Rejects paths absent from the index. */
     open(path: string): Promise<IpcResult<void>>
-    /** Reveals in Finder/Explorer. Rejects paths not present in the index. */
+    /** Reveals in Finder/Explorer. Rejects paths absent from the index. */
     reveal(path: string): Promise<IpcResult<void>>
-
+    /** Copies the path as text. */
+    copyPath(path: string): Promise<IpcResult<void>>
+    /** Moves to the OS trash. Rejects paths absent from the index. */
+    trash(path: string): Promise<IpcResult<void>>
     /**
-     * Real filesystem path for a dropped File.
-     *
-     * Must be resolved in the preload via `webUtils.getPathForFile`: the
-     * renderer only sees a virtual DataTransfer path (`/FolderName`), which
-     * is what the drop handler used to pass to the indexer -- so dropping a
-     * folder always tried to index a path that does not exist.
+     * Real filesystem path for a dropped File. Must be resolved in the preload
+     * via webUtils: the renderer only sees a virtual DataTransfer path.
      */
     pathForDropped(file: File): string | null
+    /** Starts a native drag so the file can be dropped into another app. */
+    startDrag(path: string): void
   }
 
   system: {
-    drives(): Promise<IpcResult<string[]>>
+    /** Roots the user can choose to index, platform-correct. */
+    roots(): Promise<IpcResult<string[]>>
     info(): Promise<IpcResult<SystemInfo>>
+    /** Opens the macOS Full Disk Access settings pane. */
+    openFullDiskAccessSettings(): Promise<IpcResult<void>>
   }
 
   window: {
@@ -69,20 +89,15 @@ export interface SeekrApi {
     hide(): Promise<void>
     isMaximized(): Promise<boolean>
     quit(): Promise<void>
-    /** Event-driven; replaces the old 1s `isMaximized` IPC poll. */
     onMaximizedChanged(cb: (isMaximized: boolean) => void): Unsubscribe
   }
 
   events: {
-    onIndexProgress(cb: (progress: IndexingProgress) => void): Unsubscribe
-    onIndexComplete(cb: () => void): Unsubscribe
-    onIndexError(cb: (error: string) => void): Unsubscribe
-
-    onFileAdded(cb: (file: FileItem) => void): Unsubscribe
-    onFileChanged(cb: (file: FileItem) => void): Unsubscribe
-    onFileRemoved(cb: (path: string) => void): Unsubscribe
-    onWatcherReady(cb: () => void): Unsubscribe
-    onWatcherStopped(cb: () => void): Unsubscribe
+    onIndexProgress(cb: (status: IndexProgressPayload) => void): Unsubscribe
+    onIndexComplete(cb: (payload: { count: number; deniedPaths: string[] }) => void): Unsubscribe
+    onIndexError(cb: (message: string) => void): Unsubscribe
+    /** Linux inotify watch limit reached; the watcher is degraded. */
+    onWatcherLimit(cb: (root: string) => void): Unsubscribe
 
     onFocusSearch(cb: () => void): Unsubscribe
     onOpenSettings(cb: () => void): Unsubscribe

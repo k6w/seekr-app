@@ -12,12 +12,12 @@ import {
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import log from 'electron-log/main'
-import { DatabaseService } from './services/database'
-import { FileIndexer } from './services/indexer'
-import { FileWatcher } from './services/file-watcher'
 import { IpcHandlers } from './services/ipc-handlers'
 import { SettingsStore } from './services/settings'
+import { IndexReader } from './services/index-reader'
 import { getSystemInfo } from './services/platform'
+import { EngineHost } from './engine/host'
+import { ENGINE_PORT_CHANNEL } from './engine/protocol'
 import { IpcChannel, IpcEvent } from './ipc/channels'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -25,7 +25,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 process.env.APP_ROOT = path.join(__dirname, '..')
 
 export const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
-export const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron')
 export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
 
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
@@ -34,30 +33,23 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
 
 let win: BrowserWindow | null = null
 let tray: Tray | null = null
-let db: DatabaseService | null = null
-let indexer: FileIndexer | null = null
-let fileWatcher: FileWatcher | null = null
-let ipcHandlers: IpcHandlers | null = null
 let settings: SettingsStore | null = null
+let ipcHandlers: IpcHandlers | null = null
+let engineHost: EngineHost | null = null
+let indexReader: IndexReader | null = null
 let isQuitting = false
 
 log.initialize()
 log.errorHandler.startCatching({ showDialog: false })
 
-// Previously both of these were swallowed with a "don't exit" comment, which
-// left the app running in an unknown state with nothing recorded anywhere a
-// user could find. Log to disk instead; electron-log writes to the standard
-// per-platform log directory.
-process.on('uncaughtException', (error) => {
-  log.error('Uncaught exception:', error)
-})
-process.on('unhandledRejection', (reason) => {
-  log.error('Unhandled rejection:', reason)
-})
+// Previously both were swallowed with a "don't exit" comment, leaving the app
+// running in an unknown state with nothing recorded anywhere a user could find.
+process.on('uncaughtException', (error) => log.error('Uncaught exception:', error))
+process.on('unhandledRejection', (reason) => log.error('Unhandled rejection:', reason))
 
 /**
- * A second instance would open a second better-sqlite3 writer against the same
- * WAL database, register the same global shortcut, and create a second tray.
+ * A second instance would open a second writer against the same WAL database,
+ * register the same global shortcut, and create a second tray.
  */
 if (!app.requestSingleInstanceLock()) {
   app.quit()
@@ -93,16 +85,14 @@ function hardenWebContents(contents: Electron.WebContents): void {
     }
   })
 
-  contents.on('will-attach-webview', (event) => {
-    // No part of this app uses <webview>.
-    event.preventDefault()
-  })
+  // No part of this app uses <webview>.
+  contents.on('will-attach-webview', (event) => event.preventDefault())
 }
 
 /**
- * CSP is delivered as a response header rather than only a <meta> tag so it
- * also covers the dev server. 'unsafe-inline' for styles is required by the
- * styled-jsx/Tailwind runtime injection; scripts get no such exemption.
+ * Delivered as a response header as well as a meta tag, so the dev server is
+ * covered too. Styles need 'unsafe-inline' for Tailwind's runtime injection;
+ * scripts get no such exemption.
  */
 function applyContentSecurityPolicy(): void {
   const policy = [
@@ -111,8 +101,8 @@ function applyContentSecurityPolicy(): void {
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
-    // The renderer talks to main over IPC; it needs no network access at all.
-    // The dev server needs its HMR websocket.
+    // The renderer reaches the engine over a MessagePort and main over IPC, so
+    // it needs no network access. The dev server needs its HMR websocket.
     VITE_DEV_SERVER_URL ? "connect-src 'self' ws: http://localhost:*" : "connect-src 'none'",
     "object-src 'none'",
     "base-uri 'none'",
@@ -122,27 +112,24 @@ function applyContentSecurityPolicy(): void {
 
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
-      responseHeaders: {
-        ...details.responseHeaders,
-        'Content-Security-Policy': [policy],
-      },
+      responseHeaders: { ...details.responseHeaders, 'Content-Security-Policy': [policy] },
     })
   })
 
-  // Nothing in this app requests camera, mic, geolocation, or notifications.
+  // Nothing here needs camera, mic, geolocation or notifications.
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
 }
 
 // ------------------------------------------------------------------ window --
 
-/** Window options that differ per platform. See §3 of the redesign plan. */
+/** Window options that differ per platform. */
 function platformWindowOptions(): Electron.BrowserWindowConstructorOptions {
   const info = getSystemInfo()
 
   if (info.isMac) {
     return {
       titleBarStyle: 'hiddenInset',
-      trafficLightPosition: { x: 16, y: 16 },
+      trafficLightPosition: { x: 16, y: 14 },
       vibrancy: 'sidebar',
       visualEffectState: 'followWindow',
       backgroundColor: '#00000000',
@@ -154,14 +141,14 @@ function platformWindowOptions(): Electron.BrowserWindowConstructorOptions {
       titleBarStyle: 'hidden',
       titleBarOverlay: { color: '#00000000', symbolColor: '#8a8a8a', height: 36 },
       // `transparent: true` conflicts with backgroundMaterial and renders the
-      // window black, so it is deliberately not set here.
+      // window black, so it is deliberately not set.
       ...(info.supportsMica ? { backgroundMaterial: 'mica' as const } : {}),
-      backgroundColor: info.supportsMica ? '#00000000' : '#1a1a1a',
+      backgroundColor: info.supportsMica ? '#00000000' : '#141414',
     }
   }
 
   // Linux compositors vary too much for transparency to be safe by default.
-  return { frame: true, backgroundColor: '#1a1a1a' }
+  return { frame: true, backgroundColor: '#141414' }
 }
 
 function createWindow(): void {
@@ -175,8 +162,8 @@ function createWindow(): void {
     ...platformWindowOptions(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
-      // Explicit rather than relying on Electron's defaults, so a future
-      // upgrade cannot silently weaken them.
+      // Explicit rather than relying on defaults, so an upgrade cannot
+      // silently weaken them.
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
@@ -188,6 +175,12 @@ function createWindow(): void {
   hardenWebContents(win.webContents)
 
   win.once('ready-to-show', () => win?.show())
+
+  // Give this renderer its own direct channel to the engine, so search traffic
+  // never passes through the main process.
+  win.webContents.on('did-finish-load', () => {
+    if (win) attachEngine(win)
+  })
 
   // Replaces the renderer's 1s `isMaximized()` IPC poll.
   const emitMaximized = () =>
@@ -201,9 +194,8 @@ function createWindow(): void {
     win?.hide()
   })
 
-  // The old code also intercepted 'minimize' and turned it into hide(), which
-  // broke the standard minimize-to-Dock gesture on macOS. Minimize now means
-  // minimize; closing is what sends the app to the tray.
+  // 'minimize' is deliberately not intercepted. The old code turned it into
+  // hide(), which broke the standard minimize-to-Dock gesture on macOS.
 
   win.on('closed', () => {
     win = null
@@ -214,6 +206,12 @@ function createWindow(): void {
     win.webContents.openDevTools({ mode: 'detach' })
   } else {
     void win.loadFile(path.join(RENDERER_DIST, 'index.html'))
+  }
+}
+
+function attachEngine(window: BrowserWindow): void {
+  if (!engineHost?.attachRenderer(window.webContents, ENGINE_PORT_CHANNEL)) {
+    log.error('Engine is not running; this renderer has no search capability')
   }
 }
 
@@ -255,7 +253,7 @@ function createTray(): void {
       },
       { type: 'separator' },
       {
-        label: 'Start Indexing',
+        label: 'Rebuild Index',
         click: () => {
           showWindow()
           win?.webContents.send(IpcEvent.StartIndexingFromTray)
@@ -290,7 +288,8 @@ function registerWindowHandlers(): void {
   ipcMain.handle(IpcChannel.WindowMinimize, () => win?.minimize())
   ipcMain.handle(IpcChannel.WindowMaximizeToggle, () => {
     if (!win) return
-    win.isMaximized() ? win.unmaximize() : win.maximize()
+    if (win.isMaximized()) win.unmaximize()
+    else win.maximize()
   })
   ipcMain.handle(IpcChannel.WindowHide, () => win?.hide())
   ipcMain.handle(IpcChannel.WindowIsMaximized, () => win?.isMaximized() ?? false)
@@ -303,11 +302,8 @@ function registerWindowHandlers(): void {
 function registerGlobalShortcut(): void {
   const accelerator = settings?.get().globalHotkey ?? 'CmdOrCtrl+Shift+F'
   const registered = globalShortcut.register(accelerator, () => {
-    if (win?.isVisible() && win.isFocused()) {
-      win.hide()
-    } else {
-      showWindow()
-    }
+    if (win?.isVisible() && win.isFocused()) win.hide()
+    else showWindow()
   })
 
   // The old code ignored this return value, so a conflicting shortcut failed
@@ -317,32 +313,12 @@ function registerGlobalShortcut(): void {
   }
 }
 
-async function initializeServices(): Promise<void> {
-  settings = new SettingsStore()
-  db = new DatabaseService()
-  await db.initialize()
-  indexer = new FileIndexer(db)
-  fileWatcher = new FileWatcher(db)
-  ipcHandlers = new IpcHandlers(db, indexer, fileWatcher, settings)
-}
-
 /** Runs on every exit path, on every platform. */
 async function shutdown(): Promise<void> {
   globalShortcut.unregisterAll()
   ipcHandlers?.dispose()
-  indexer?.stopIndexing()
-  try {
-    await fileWatcher?.stopWatching()
-  } catch (error) {
-    log.warn('Watcher shutdown failed:', error)
-  }
-  try {
-    // Previously guarded behind `platform !== 'darwin'` inside a handler that
-    // never fired, so the WAL was never checkpointed on macOS.
-    await db?.close()
-  } catch (error) {
-    log.warn('Database shutdown failed:', error)
-  }
+  indexReader?.close()
+  await engineHost?.stop()
   tray?.destroy()
   tray = null
 }
@@ -357,11 +333,17 @@ async function bootstrap(): Promise<void> {
 
   applyContentSecurityPolicy()
 
-  try {
-    await initializeServices()
-  } catch (error) {
-    log.error('Failed to initialize services:', error)
-  }
+  const databasePath = path.join(app.getPath('userData'), 'seekr-index.db')
+
+  settings = new SettingsStore()
+  indexReader = new IndexReader(databasePath)
+  engineHost = new EngineHost(databasePath)
+  engineHost.start()
+
+  ipcHandlers = new IpcHandlers(settings, (fullPath) => indexReader!.has(fullPath))
+
+  const engineReady = await engineHost.whenReady()
+  if (!engineReady) log.error('Engine failed to start within the timeout')
 
   registerWindowHandlers()
   createWindow()
@@ -371,15 +353,16 @@ async function bootstrap(): Promise<void> {
   /**
    * Packaged-app smoke test (scripts/smoke-packaged.cjs).
    *
-   * Proves the app launched AND the native better-sqlite3 binding loaded --
-   * the failure mode that asarUnpack exists to prevent, and that a
-   * "did a file get produced?" CI check cannot detect.
+   * Proves the app launched AND the engine process came up with its native
+   * binding loaded -- the failure asarUnpack exists to prevent, which a
+   * "was a file produced?" CI check cannot detect.
    */
   if (process.env.SEEKR_SMOKE_TEST === '1') {
-    const healthy = db !== null
-    process.stdout.write(healthy ? 'SEEKR_SMOKE_OK\n' : 'SEEKR_SMOKE_FAIL: database unavailable\n')
+    process.stdout.write(
+      engineReady ? 'SEEKR_SMOKE_OK\n' : 'SEEKR_SMOKE_FAIL: engine did not start\n',
+    )
     isQuitting = true
-    setTimeout(() => app.exit(healthy ? 0 : 1), 500)
+    setTimeout(() => app.exit(engineReady ? 0 : 1), 500)
     return
   }
 
@@ -394,11 +377,11 @@ app.on('before-quit', () => {
 })
 
 app.on('will-quit', (event) => {
-  if (!db && !fileWatcher) return
+  if (!engineHost && !indexReader) return
   event.preventDefault()
   void shutdown().finally(() => {
-    db = null
-    fileWatcher = null
+    engineHost = null
+    indexReader = null
     app.exit(0)
   })
 })
@@ -408,5 +391,5 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-// Defence in depth: even if a window is created outside createWindow().
+// Defence in depth, for any window created outside createWindow().
 app.on('web-contents-created', (_event, contents) => hardenWebContents(contents))

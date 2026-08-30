@@ -1,55 +1,59 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { IndexingProgress } from '@/types'
+import type { IndexProgressPayload } from '../../electron/ipc/api'
 
 export interface UseIndexingOptions {
-  onComplete?: (fileCount: number) => void
+  onComplete?: (fileCount: number, deniedPaths: string[]) => void
   onError?: (message: string) => void
 }
 
 /**
- * Owns all indexing state and the main-process event subscriptions.
+ * Indexing state, driven by events from the engine process.
  *
- * Previously this lived inline in App.tsx inside a single effect whose
- * dependency array was `[fileCount, addNotification]`. Because `addNotification`
- * was a plain function recreated on every render, that effect tore down and
- * re-registered all eight IPC listeners on *every* render -- and indexing
- * progress events cause renders, so during a crawl it thrashed continuously.
- *
- * Here the subscriptions mount once. Callbacks are held in a ref so a caller
- * passing inline closures cannot cause resubscription.
+ * The subscriptions mount once. Previously this lived inline in App.tsx inside
+ * an effect whose dependency array included a non-memoised `addNotification`,
+ * so all eight IPC listeners were torn down and re-registered on every render
+ * -- and indexing progress causes renders, so a crawl thrashed continuously.
  */
 export function useIndexing(options: UseIndexingOptions = {}) {
   const [isIndexing, setIsIndexing] = useState(false)
   const [progress, setProgress] = useState(0)
   const [fileCount, setFileCount] = useState(0)
+  const [currentPath, setCurrentPath] = useState<string | undefined>()
+  const [deniedPaths, setDeniedPaths] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
 
   const callbacks = useRef(options)
   callbacks.current = options
 
-  const refreshFileCount = useCallback(async () => {
-    const response = await window.seekr.index.count()
-    if (response.ok) {
-      setFileCount(response.data)
-      return response.data
+  const refreshCount = useCallback(async () => {
+    try {
+      const count = await window.seekr.index.count()
+      setFileCount(count)
+      return count
+    } catch {
+      return 0
     }
-    return 0
   }, [])
 
   useEffect(() => {
-    void refreshFileCount()
+    // The engine port may not have arrived yet on first paint.
+    const timer = setTimeout(() => void refreshCount(), 250)
 
     const unsubscribers = [
-      window.seekr.events.onIndexProgress((update: IndexingProgress) => {
-        setIsIndexing(update.isIndexing)
-        setProgress(update.progress)
-        if (update.filesProcessed) setFileCount(update.filesProcessed)
+      window.seekr.events.onIndexProgress((status: IndexProgressPayload) => {
+        setIsIndexing(status.isIndexing)
+        setProgress(status.progress)
+        setCurrentPath(status.currentPath)
+        if (status.filesProcessed) setFileCount(status.filesProcessed)
+        if (status.deniedPaths.length > 0) setDeniedPaths(status.deniedPaths)
       }),
 
-      window.seekr.events.onIndexComplete(() => {
+      window.seekr.events.onIndexComplete(({ count, deniedPaths: denied }) => {
         setIsIndexing(false)
         setProgress(100)
-        void refreshFileCount().then((count) => callbacks.current.onComplete?.(count))
+        setFileCount(count)
+        setDeniedPaths(denied)
+        callbacks.current.onComplete?.(count, denied)
       }),
 
       window.seekr.events.onIndexError((message: string) => {
@@ -60,41 +64,29 @@ export function useIndexing(options: UseIndexingOptions = {}) {
     ]
 
     return () => {
+      clearTimeout(timer)
       for (const unsubscribe of unsubscribers) unsubscribe()
     }
-  }, [refreshFileCount])
+  }, [refreshCount])
 
   /**
-   * Starts a crawl. With no paths, the main process picks platform-correct
-   * defaults -- the old renderer branched on `process.platform`, which is
-   * undefined under contextIsolation, and fell back to `['/home', '/Users']`
-   * (neither of which is right on macOS).
+   * Starts a crawl. With no paths, main picks platform-correct defaults -- the
+   * old renderer branched on `process.platform`, which is undefined under
+   * contextIsolation, and fell back to `['/home', '/Users']`.
    */
   const startIndexing = useCallback(
     async (paths?: string[]) => {
       if (isIndexing) return
-
       setError(null)
       setProgress(0)
-
-      let roots = paths
-      if (!roots || roots.length === 0) {
-        const drives = await window.seekr.system.drives()
-        if (!drives.ok) {
-          setError(drives.error)
-          callbacks.current.onError?.(drives.error)
-          return
-        }
-        // First entry is the user's home directory on every platform.
-        roots = drives.data.slice(0, 1)
-      }
-
       setIsIndexing(true)
-      const response = await window.seekr.index.start({ paths: roots })
-      if (!response.ok) {
+      try {
+        await window.seekr.index.start(paths)
+      } catch (err) {
         setIsIndexing(false)
-        setError(response.error)
-        callbacks.current.onError?.(response.error)
+        const message = err instanceof Error ? err.message : 'Indexing failed to start'
+        setError(message)
+        callbacks.current.onError?.(message)
       }
     },
     [isIndexing],
@@ -105,5 +97,15 @@ export function useIndexing(options: UseIndexingOptions = {}) {
     setIsIndexing(false)
   }, [])
 
-  return { isIndexing, progress, fileCount, error, startIndexing, stopIndexing, refreshFileCount }
+  return {
+    isIndexing,
+    progress,
+    fileCount,
+    currentPath,
+    deniedPaths,
+    error,
+    startIndexing,
+    stopIndexing,
+    refreshCount,
+  }
 }

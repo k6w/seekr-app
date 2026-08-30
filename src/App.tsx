@@ -1,211 +1,187 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Search, Settings, HardDrive, Loader2 } from 'lucide-react'
+import { Search, Settings as SettingsIcon, HardDrive, Loader2, ShieldAlert } from 'lucide-react'
 import { SearchInput } from '@/components/search/SearchInput'
-import { SearchResults } from '@/components/search/SearchResults'
-import { SearchFilters } from '@/components/search/SearchFilters'
+import { ResultList } from '@/components/search/ResultList'
 import { DragDropZone } from '@/components/search/DragDropZone'
 import { SettingsPanel } from '@/components/settings/SettingsPanel'
-import { OnboardingWizard } from '@/components/onboarding/OnboardingWizard'
 import { TitleBar } from '@/components/ui/title-bar'
 import { NotificationContainer, useNotifications } from '@/components/ui/notification'
 import { ErrorBoundary } from '@/components/ui/error-boundary'
 import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { useFileSearch } from '@/hooks/useFileSearch'
 import { useIndexing } from '@/hooks/useIndexing'
 import { useGlobalHotkeys } from '@/hooks/useHotkeys'
 import { useTheme } from '@/hooks/useTheme'
-import { cn } from '@/lib/utils'
-
-const ONBOARDING_COMPLETED_KEY = 'seekr-onboarding-completed'
 
 function App() {
   const {
-    searchQuery,
-    setSearchQuery,
-    searchResults,
+    query,
+    rows,
+    total,
+    elapsedMs,
     isLoading,
+    hasMore,
     error,
-    filters,
-    currentPage,
-    totalPages,
-    hasNextPage,
-    hasPrevPage,
-    itemsPerPage,
     search,
-    updateFilters,
+    loadMore,
     openFile,
     revealFile,
-    goToPage,
-    nextPage,
-    prevPage,
+    copyPath,
+    trashFile,
   } = useFileSearch()
 
-  const { resolvedTheme } = useTheme()
+  useTheme()
   const { notifications, addNotification, removeNotification } = useNotifications()
-
   const [showSettings, setShowSettings] = useState(false)
-  const [showOnboarding, setShowOnboarding] = useState(false)
 
-  const { isIndexing, progress, fileCount, startIndexing } = useIndexing({
-    onComplete: (count) => {
-      if (count > 0) {
+  const { isIndexing, progress, fileCount, currentPath, deniedPaths, startIndexing } = useIndexing({
+    onComplete: (count, denied) => {
+      addNotification({
+        type: 'success',
+        title: 'Indexing complete',
+        message: `${count.toLocaleString()} items indexed.`,
+        duration: 4000,
+      })
+      if (denied.length > 0) {
         addNotification({
-          type: 'success',
-          title: 'Indexing complete',
-          message: `${count.toLocaleString()} files indexed.`,
-          duration: 4000,
+          type: 'warning',
+          title: `${denied.length} folders could not be read`,
+          message: 'Grant Full Disk Access so Seekr can index them.',
+          duration: 10000,
         })
       }
     },
-    onError: (message) => {
-      addNotification({ type: 'error', title: 'Indexing failed', message, duration: 8000 })
-    },
+    onError: (message) =>
+      addNotification({ type: 'error', title: 'Indexing failed', message, duration: 8000 }),
   })
 
   const searchInputRef = useRef<HTMLInputElement>(null)
-  useGlobalHotkeys({ searchInputRef })
+  useGlobalHotkeys({ searchInputRef, onStartIndexing: () => void startIndexing() })
 
-  // Onboarding shows only on a genuinely empty index, and only once.
-  useEffect(() => {
-    if (fileCount === 0 && !localStorage.getItem(ONBOARDING_COMPLETED_KEY)) {
-      setShowOnboarding(true)
-    }
-  }, [fileCount])
-
-  // Tray and menu commands. Mounts once: the handlers below are all stable.
+  // Tray and menu commands. Mounts once; every handler below is stable.
   useEffect(() => {
     const unsubscribers = [
       window.seekr.events.onFocusSearch(() => searchInputRef.current?.focus()),
       window.seekr.events.onOpenSettings(() => setShowSettings(true)),
       window.seekr.events.onStartIndexingFromTray(() => void startIndexing()),
+      window.seekr.events.onWatcherLimit(() =>
+        addNotification({
+          type: 'warning',
+          title: 'Live updates are limited',
+          message: 'The system watch limit was reached. Raise fs.inotify.max_user_watches.',
+          duration: 10000,
+        }),
+      ),
     ]
     return () => {
       for (const unsubscribe of unsubscribers) unsubscribe()
     }
-  }, [startIndexing])
+  }, [startIndexing, addNotification])
 
   const handleFolderDrop = useCallback(
-    async (folderPath: string) => {
-      await startIndexing([folderPath])
-    },
+    (folderPath: string) => void startIndexing([folderPath]),
     [startIndexing],
   )
 
-  const handleOnboardingComplete = useCallback(() => {
-    setShowOnboarding(false)
-    localStorage.setItem(ONBOARDING_COMPLETED_KEY, 'true')
-  }, [])
-
-  const handleOnboardingStartIndexing = useCallback(() => {
-    localStorage.setItem(ONBOARDING_COMPLETED_KEY, 'true')
-    void startIndexing()
-  }, [startIndexing])
+  const isEmptyIndex = fileCount === 0 && !isIndexing
+  const statusText = isIndexing
+    ? `Indexing… ${progress.toFixed(0)}% · ${fileCount.toLocaleString()} found`
+    : `${fileCount.toLocaleString()} items indexed`
 
   return (
     <ErrorBoundary>
       <DragDropZone onFolderDrop={handleFolderDrop}>
-        <div className="flex h-screen flex-col bg-background">
+        {/*
+          h-screen with a min-h-0 flex child, so the RESULT LIST scrolls rather
+          than the document. The old shell was `min-h-[500px]` with no bound, so
+          its scroll area resolved to auto height and the whole page scrolled.
+        */}
+        <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
           <TitleBar />
 
-          <header className="z-40 shrink-0 border-b bg-background/80 backdrop-blur-sm">
-            <div className="flex items-center justify-between px-4 py-3">
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2">
-                  <Search className="h-5 w-5 text-primary" />
-                  <h1 className="text-base font-semibold">Seekr</h1>
-                </div>
-
-                {fileCount > 0 && !isIndexing && (
-                  <Badge variant="secondary" className="text-xs tabular-nums">
-                    {fileCount.toLocaleString()} indexed
-                  </Badge>
-                )}
-
-                {isIndexing && (
-                  <Badge variant="outline" className="text-xs tabular-nums">
-                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                    Indexing {progress.toFixed(0)}% · {fileCount.toLocaleString()}
-                  </Badge>
-                )}
-              </div>
-
-              <div className="flex items-center gap-2">
-                {fileCount === 0 && !isIndexing && (
-                  <Button onClick={() => void startIndexing()} size="sm">
-                    <HardDrive className="mr-2 h-4 w-4" />
-                    Start Indexing
-                  </Button>
-                )}
-
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  aria-label="Settings"
-                  onClick={() => setShowSettings(true)}
-                >
-                  <Settings className="h-4 w-4" />
-                </Button>
-              </div>
+          <header className="shrink-0 border-b px-3 py-2">
+            <div className="flex items-center gap-2">
+              <Search className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <SearchInput
+                ref={searchInputRef}
+                value={query}
+                onChange={search}
+                className="flex-1"
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label="Settings"
+                onClick={() => setShowSettings(true)}
+              >
+                <SettingsIcon className="h-4 w-4" />
+              </Button>
             </div>
           </header>
 
-          {/*
-            The app frame is h-screen and this region is min-h-0 flex-1, so the
-            RESULT LIST scrolls rather than the document. Previously the results
-            shell was `min-h-[500px]` with no bound, so its ScrollArea resolved
-            to auto height and the whole page scrolled instead.
-          */}
-          <main className="flex min-h-0 flex-1 flex-col gap-3 px-4 py-4">
-            <div className="shrink-0 space-y-3">
-              <SearchInput
-                ref={searchInputRef}
-                value={searchQuery}
-                onChange={setSearchQuery}
-                onSearch={search}
-              />
-
-              <SearchFilters filters={filters} onFiltersChange={updateFilters} />
-
-              {error && (
-                <Card className="border-destructive bg-destructive/5 p-3" role="alert">
-                  <p className="text-sm text-destructive">{error}</p>
-                </Card>
-              )}
+          {error && (
+            <div role="alert" className="shrink-0 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {error}
             </div>
+          )}
 
-            <div
-              className={cn(
-                'flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border shadow-sm',
-                resolvedTheme === 'dark' ? 'bg-background/60' : 'bg-background/80',
-              )}
+          {deniedPaths.length > 0 && (
+            <button
+              type="button"
+              onClick={() => void window.seekr.system.openFullDiskAccessSettings()}
+              className="flex shrink-0 items-center gap-2 bg-amber-500/10 px-3 py-2 text-left text-sm text-amber-700 hover:bg-amber-500/15 dark:text-amber-400"
             >
-              <SearchResults
-                results={searchResults}
+              <ShieldAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="flex-1">
+                {deniedPaths.length} folders are unreadable. Grant Full Disk Access to index them.
+              </span>
+              <span className="shrink-0 underline">Open Settings</span>
+            </button>
+          )}
+
+          <main className="flex min-h-0 flex-1 flex-col">
+            {isEmptyIndex ? (
+              <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
+                <HardDrive className="h-8 w-8 text-muted-foreground" aria-hidden="true" />
+                <div>
+                  <p className="text-sm font-medium">No index yet</p>
+                  <p className="text-sm text-muted-foreground">
+                    Build one to start searching, or drop a folder here.
+                  </p>
+                </div>
+                <Button size="sm" onClick={() => void startIndexing()}>
+                  Build index
+                </Button>
+              </div>
+            ) : (
+              <ResultList
+                rows={rows}
                 isLoading={isLoading}
-                onOpenFile={openFile}
-                onRevealFile={revealFile}
-                currentPage={currentPage}
-                totalPages={totalPages}
-                hasNextPage={hasNextPage}
-                hasPrevPage={hasPrevPage}
-                itemsPerPage={itemsPerPage}
-                onPageChange={goToPage}
-                onNextPage={nextPage}
-                onPrevPage={prevPage}
+                hasMore={hasMore}
+                onLoadMore={loadMore}
+                onOpen={(row) => void openFile(row.fullPath)}
+                onReveal={(row) => void revealFile(row.fullPath)}
+                onCopyPath={(row) => void copyPath(row.fullPath)}
+                onTrash={(row) => void trashFile(row.fullPath)}
+                emptyMessage={query.trim() ? `No matches for "${query.trim()}"` : 'Type to search'}
               />
-            </div>
+            )}
           </main>
 
-          <OnboardingWizard
-            isVisible={showOnboarding}
-            onComplete={handleOnboardingComplete}
-            onStartIndexing={handleOnboardingStartIndexing}
-          />
+          {/* Status bar: index freshness and query cost, which the app never showed. */}
+          <footer className="flex shrink-0 items-center justify-between border-t px-3 py-1.5 text-xs text-muted-foreground">
+            <span aria-live="polite" className="truncate">
+              {isIndexing && <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />}
+              {query.trim() && total !== null
+                ? `${total.toLocaleString()} result${total === 1 ? '' : 's'} · ${elapsedMs}ms`
+                : statusText}
+            </span>
+            <span className="ml-3 truncate text-right opacity-70">
+              {isIndexing ? currentPath : '↑↓ navigate · ⏎ open · ⌘⏎ reveal'}
+            </span>
+          </footer>
 
           <SettingsPanel open={showSettings} onOpenChange={setShowSettings} />
-
           <NotificationContainer notifications={notifications} onRemove={removeNotification} />
         </div>
       </DragDropZone>
