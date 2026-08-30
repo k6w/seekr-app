@@ -70,11 +70,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-          # macOS signing and notarization. Absent secrets make the notarize
-          # hook fail loudly in CI rather than silently shipping an unsigned
-          # build — which matters because TCC grants are keyed to the
-          # signature, so an unsigned build loses Full Disk Access on every
-          # rebuild.
+          # Without a certificate, electron-builder searches the keychain and
+          # fails the job. Turn discovery off unless one is actually supplied.
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.MAC_CSC_LINK != '' }}
+
+          # macOS signing and notarization. With none of these set the build
+          # ships unsigned and says so; with only some of them set it fails,
+          # because that is a misconfiguration rather than a choice. Worth
+          # configuring: macOS keys Full Disk Access to the code signature, so
+          # an unsigned build asks for that permission again after every update.
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}

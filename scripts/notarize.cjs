@@ -16,15 +16,24 @@ exports.default = async function notarizing(context) {
   }
 
   const { APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID } = process.env
-  if (!APPLE_ID || !APPLE_APP_SPECIFIC_PASSWORD || !APPLE_TEAM_ID) {
-    if (process.env.CI) {
-      throw new Error(
-        '[notarize] APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID are required in CI. ' +
-          'Set SEEKR_SKIP_NOTARIZE=1 only for builds that are never distributed.',
-      )
-    }
-    console.warn('[notarize] skipped: Apple credentials not set (local build)')
+  const supplied = [APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID].filter(Boolean).length
+
+  // Unsigned is the intended default for this project: releases are published
+  // on GitHub and users confirm the Gatekeeper prompt once, as documented in
+  // the README. Setting the Apple secrets later turns notarization on with no
+  // other change.
+  if (supplied === 0) {
+    console.log('[notarize] not configured; shipping unsigned (see README)')
     return
+  }
+
+  // Partially configured is a mistake worth failing on: it usually means a
+  // secret was renamed or dropped, and silently shipping unsigned would hide it.
+  if (supplied < 3) {
+    throw new Error(
+      '[notarize] Incomplete Apple credentials. Set all of APPLE_ID, ' +
+        'APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID, or none of them.',
+    )
   }
 
   const { notarize } = require('@electron/notarize')

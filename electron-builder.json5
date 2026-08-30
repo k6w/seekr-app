@@ -63,10 +63,11 @@
     "gatekeeperAssess": false,
     "entitlements": "build/entitlements.mac.plist",
     "entitlementsInherit": "build/entitlements.mac.plist",
-    // Signing identity comes from CSC_LINK / CSC_KEY_PASSWORD in CI, and
-    // notarization from APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID.
-    // Set SEEKR_SKIP_NOTARIZE=1 for local unsigned builds.
-    "notarize": true,
+    // Notarization is handled by the afterSign hook in scripts/notarize.cjs,
+    // not here, because only the hook can skip cleanly when no Apple
+    // credentials are configured. Signing identity comes from
+    // CSC_LINK / CSC_KEY_PASSWORD.
+    "notarize": false,
     "artifactName": "Seekr-mac-${version}-${arch}.${ext}",
     "extendInfo": {
       // macOS shows these strings in the permission prompts. Without them the

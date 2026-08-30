@@ -41,13 +41,29 @@ platform's own glyphs.
 Download the latest build for your platform from
 [Releases](https://github.com/k6w/seekr-app/releases/latest).
 
-- **macOS** — universal `.dmg` (Apple Silicon and Intel). Signed and notarized,
-  so it opens without a Gatekeeper detour.
-- **Windows** — `Setup.exe` installer (x64, arm64) or a portable `.exe`.
-- **Linux** — `.AppImage`, `.deb` or `.rpm`.
+- **macOS** — `.dmg` for Apple Silicon and Intel
+- **Windows** — `Setup.exe` installer (x64, arm64) or a portable `.exe`
+- **Linux** — `.AppImage`, `.deb` or `.rpm`
 
 The app updates itself: it checks on launch and once a day, and asks before
 downloading anything.
+
+### The first launch takes one extra click
+
+Builds are not code-signed, so both systems will ask you to confirm an app
+downloaded from the internet. This is expected.
+
+**macOS** — right-click Seekr in Applications and choose **Open**, then **Open**
+again. Double-clicking the first time shows "cannot be opened" with no way
+through; the right-click route is the one that offers the confirm button. You
+only do this once.
+
+**Windows** — SmartScreen shows "Windows protected your PC". Click **More info**,
+then **Run anyway**.
+
+One consequence worth knowing on macOS: Full Disk Access is granted to an app's
+code signature, and an unsigned app's signature changes with every build. If you
+grant it, you will be asked again after an update.
 
 ### macOS permissions
 
