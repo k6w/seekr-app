@@ -1,8 +1,16 @@
-# pnpm 11 blocks dependency build/install scripts unless allowed here.
-#   esbuild / electron-winstaller  - fetch their platform binaries
-#   better-sqlite3                 - ships N-API prebuilds, so nothing is
-#                                    actually compiled; allowed only so the
-#                                    install does not fail on "ignored builds"
+# pnpm 11 reads settings from this file rather than package.json. It also
+# requires `packages` to be present here, and errors on `pnpm store path`
+# without it -- which is the first thing actions/setup-node's pnpm cache runs,
+# so CI fails before installing anything.
+packages:
+  - .
+
+# Dependency build/install scripts are blocked unless listed.
+#   esbuild / electron-winstaller  fetch their platform binaries
+#   electron                       downloads its runtime
+#   better-sqlite3                 ships N-API prebuilds, so nothing is
+#                                  actually compiled; listed only so the
+#                                  install does not fail on "ignored builds"
 allowBuilds:
   better-sqlite3: true
   electron: true
