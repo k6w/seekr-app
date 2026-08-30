@@ -1,160 +1,117 @@
-# Seekr 🔍
+# Seekr
 
-A lightning-fast, modern file search application built with Electron, React, and TypeScript. Seekr provides instant search results with fuzzy matching, beautiful glassmorphism UI, and powerful filtering capabilities.
+Instant file search for macOS, Windows and Linux. Press a hotkey, type a few
+characters, open the file.
 
-## ✨ Features
+## What it does
 
-- **⚡ Fast Search**: Indexed filename search backed by SQLite
-- **🔍 Fuzzy Matching**: Find files even with typos using advanced fuzzy search algorithms
-- **🎨 Modern UI**: Beautiful glassmorphism design with dark/light theme support
-- **📁 Smart Filtering**: Filter by file type, size, date modified, and more
-- **🔥 Live File Watching**: Real-time index updates as files change
-- **⌨️ Keyboard Shortcuts**: Navigate efficiently with customizable hotkeys
-- **🖥️ Cross-Platform**: Works on Windows, macOS, and Linux
-- **🎯 System Tray**: Quick access from your system tray
-- **📊 File Previews**: Preview files without opening them
+- **Search as you type** over an index of your files, backed by SQLite's
+  trigram full-text index. Substring matches, not just whole words.
+- **A hotkey palette** that floats over whatever you were doing, and a full
+  window for browsing when you want columns and a scrollback.
+- **Keyboard first.** Arrows to move, `⏎` to open, `⌘⏎` to reveal, `⌘C` to copy
+  the path, `⌘⌫` to trash. The mouse is optional everywhere.
+- **Live updates.** A filesystem watcher keeps the index current; you do not
+  re-index to find a file you saved a second ago.
+- **Ranked results.** Exact name, then name-without-extension, prefix, word
+  boundary, substring — with recent files lifted and build directories sunk.
 
-## 🚀 Quick Start
+## Install
 
-### Download
+Download the latest build for your platform from
+[Releases](https://github.com/k6w/seekr-app/releases/latest).
 
-Download the latest release for your platform:
+- **macOS** — universal `.dmg` (Apple Silicon and Intel). Signed and notarized,
+  so it opens without a Gatekeeper detour.
+- **Windows** — `Setup.exe` installer (x64, arm64) or a portable `.exe`.
+- **Linux** — `.AppImage`, `.deb` or `.rpm`.
 
-- **Windows**:
-  - [Installer (Setup.exe)](https://github.com/k6w/seekr-app/releases/latest) - Full installation with shortcuts
-  - [Portable (Portable.exe)](https://github.com/k6w/seekr-app/releases/latest) - No installation required
-- **macOS**: [Seekr-Mac-1.0.0-Installer.dmg](https://github.com/k6w/seekr-app/releases/latest)
-- **Linux**: [Seekr-Linux-1.0.0.AppImage](https://github.com/k6w/seekr-app/releases/latest)
+The app updates itself: it checks on launch and once a day, and asks before
+downloading anything.
 
-### Installation
+### macOS permissions
 
-**Windows:**
-- **Installer**: Download and run the Setup.exe file. Follow the installation wizard to install Seekr with Start Menu and desktop shortcuts.
-- **Portable**: Download the Portable.exe file and run it directly. No installation required - perfect for USB drives or temporary use.
+macOS protects `~/Desktop`, `~/Documents`, `~/Downloads` and `~/Library` behind
+a privacy setting. Without it, Seekr indexes everything else and tells you which
+folders it could not read, with a one-click link to the setting. There is no API
+to request Full Disk Access, so this step is manual by design.
 
-**macOS:** Download the .dmg file, open it, and drag Seekr to your Applications folder.
+## Search syntax
 
-**Linux:** Download the .AppImage file, make it executable (`chmod +x Seekr-Linux-*.AppImage`), and run it.
+| | |
+|---|---|
+| `report` | name or path contains "report" |
+| `ext:pdf` `ext:pdf,docx` | by extension |
+| `type:image` | `document` `image` `video` `audio` `archive` `code` `folder` |
+| `size:>10mb` `size:<1gb` | by size |
+| `date:today` | `today` `yesterday` `week` `month` `year` |
 
-## 🛠️ Development
+Operators combine with text: `report ext:pdf date:week`.
 
-### Prerequisites
+## Shortcuts
 
-- Node.js 20+
-- npm or yarn
+| | |
+|---|---|
+| `⌘⇧F` / `Ctrl+Shift+F` | Open the palette from anywhere |
+| `⌘K` / `Ctrl+K` | Focus search |
+| `↑` `↓` `PgUp` `PgDn` `Home` `End` | Move through results |
+| `⏎` | Open |
+| `⌘⏎` / `Ctrl+⏎` | Reveal in Finder / Explorer |
+| `⌘C` / `Ctrl+C` | Copy path |
+| `⌘⌫` / `Ctrl+Del` | Move to Trash |
+| `Esc` | Clear, then close |
 
-### Setup
+Results can also be dragged straight into another application.
+
+## Architecture
+
+Three processes, so a full-disk crawl never freezes the window:
+
+```
+renderer (palette)  ─┐
+                     ├─ MessagePort ─→  engine (utilityProcess)
+renderer (window)   ─┘                  SQLite + FTS5 trigram
+        │                               crawler + filesystem watcher
+        └── IPC ──→ main
+                    windows, tray, menu, shell actions, permissions
+```
+
+- **The engine** owns the index and every filesystem operation. Renderers get a
+  direct `MessagePort` to it, so search traffic never passes through main.
+- **Main** owns only what it must: windows, the tray, the menu, and the `shell`
+  verbs. Every path from a renderer is validated against the index before it
+  reaches the OS.
+- **The renderer** is sandboxed, context-isolated, and reaches the rest of the
+  app through one allowlisted bridge. There is no general-purpose IPC surface.
+
+## Development
+
+Requires Node 22+ and pnpm 9+.
 
 ```bash
-# Clone the repository
-git clone https://github.com/k6w/seekr-app.git
-cd seekr-app
-
-# Install dependencies
 pnpm install
-
-# Start development server
-pnpm dev
-
-# Build for production
-npm run build
+pnpm dev            # Vite + Electron with hot reload
 ```
-
-### Building for Distribution
-
-Seekr supports building for multiple platforms:
 
 ```bash
-# Build for current platform
-npm run build
-
-# Build for specific platforms
-npm run build:win     # Windows (portable .exe)
-npm run build:mac     # macOS (.dmg)
-npm run build:linux   # Linux (AppImage)
-
-# Test the build process
-npm run test:build
-
-# Clean build artifacts
-npm run clean
+pnpm tsc            # type-check both projects
+pnpm lint           # lint the repo
+pnpm lint:strict    # zero-warning gate for electron/ and tests/
+pnpm test           # unit and integration tests
+pnpm build          # package for the current platform
 ```
 
-**Platform-specific notes:**
-- **Windows**: Builds both an NSIS installer (.exe) and a portable executable
-  - Installer: Full installation with Start Menu shortcuts, desktop shortcut, and uninstaller
-  - Portable: Single executable that runs without installation
-- **macOS**: Creates a DMG installer (unsigned, may require security settings adjustment)
-- **Linux**: Generates an AppImage (portable, works on most distributions)
+Two extra checks worth knowing about:
 
-**CI/CD**: The project includes GitHub Actions workflows that automatically build for all platforms on push to main/master branches.
-
-### Project Structure
-
-```
-seekr/
-├── src/                    # React frontend
-├── components/         # Reusable UI components
-│   ├── hooks/             # Custom React hooks
-│   ├── lib/               # Utility functions
-
-│   └── assets/            # Static assets
-├── electron/              # Electron main process
-│   ├── main.ts            # Main process entry point
-│   ├── preload.ts         # Preload script for IPC
-│   └── services/          # Backend services
-├── public/                # Public assets
-└── dist/                  # Build output
+```bash
+node scripts/smoke-packaged.cjs   # launch the built app, assert the engine answers
+node scripts/bench-search.mjs     # measure query latency against a synthetic corpus
 ```
 
-## ⌨️ Keyboard Shortcuts
+The smoke test is the one that matters before a release. Native modules load
+differently from an asar archive than they do in development, so "the build
+produced a file" is not evidence that the app runs.
 
-- `Ctrl/Cmd + Shift + F` - Show/Hide Seekr
-- `Escape` - Close window
-- `Enter` - Open selected file
-- `Ctrl/Cmd + Enter` - Open file location
-- `↑/↓` - Navigate results
-- `Ctrl/Cmd + ,` - Open settings
+## Licence
 
-## 🎨 Tech Stack
-
-- **Frontend**: React 18, TypeScript, Tailwind CSS, shadcn/ui
-- **Backend**: Electron, Node.js, better-sqlite3
-- **Build**: Vite, electron-builder
-- **Search**: SQLite-backed filename and path matching
-- **File Watching**: Chokidar for real-time file system monitoring
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
-### Development Workflow
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/amazing-feature`
-3. Make your changes
-4. Run tests: `pnpm test`
-5. Commit your changes: `git commit -m 'Add amazing feature'`
-6. Push to the branch: `git push origin feature/amazing-feature`
-7. Open a Pull Request
-
-## 📝 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- Built with [Electron](https://electronjs.org/)
-- UI components from [shadcn/ui](https://ui.shadcn.com/)
-- Icons from [Lucide](https://lucide.dev/)
-- Search powered by [SQLite](https://sqlite.org/)
-
-## 📞 Support
-
-- 🐛 [Report a Bug](https://github.com/k6w/seekr-app/issues/new?template=bug_report.md)
-- 💡 [Request a Feature](https://github.com/k6w/seekr-app/issues/new?template=feature_request.md)
-- 💬 [Discussions](https://github.com/k6w/seekr-app/discussions)
-
----
-
-<p align="center">Made with ❤️ by <a href="https://github.com/k6w">k6w</a></p>
+MIT. See [LICENSE](LICENSE).
