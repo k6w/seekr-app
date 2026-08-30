@@ -1,0 +1,10 @@
+# pnpm 11 blocks dependency build/install scripts unless allowed here.
+#   esbuild / electron-winstaller  - fetch their platform binaries
+#   better-sqlite3                 - ships N-API prebuilds, so nothing is
+#                                    actually compiled; allowed only so the
+#                                    install does not fail on "ignored builds"
+allowBuilds:
+  better-sqlite3: true
+  electron: true
+  electron-winstaller: true
+  esbuild: true

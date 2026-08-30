@@ -1,0 +1,17 @@
+{
+  /*
+   * Full strict mode for everything rewritten so far: the main process, the
+   * IPC contract, the security layer, and the test suite. CI runs this in
+   * addition to the base project, so newly written code cannot regress while
+   * the legacy renderer is migrated separately.
+   */
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": false
+  },
+  "include": ["electron", "tests"]
+}

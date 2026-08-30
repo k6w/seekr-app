@@ -1,438 +1,192 @@
-import React, { useState, useEffect } from 'react';
-import { Search, Settings, HardDrive, Loader2 } from 'lucide-react';
-import { SearchInput } from '@/components/search/SearchInput';
-import { SearchResults } from '@/components/search/SearchResults';
-import { SearchFilters } from '@/components/search/SearchFilters';
-import { DragDropZone } from '@/components/search/DragDropZone';
-import { SettingsPanel } from '@/components/settings/SettingsPanel';
-import { OnboardingWizard } from '@/components/onboarding/OnboardingWizard';
-import { TitleBar } from '@/components/ui/title-bar';
-import { NotificationContainer, useNotifications } from '@/components/ui/notification';
-import { ErrorBoundary } from '@/components/ui/error-boundary';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { useFileSearch } from '@/hooks/useFileSearch';
-import { useGlobalHotkeys } from '@/hooks/useHotkeys';
-import { useSearchHistory } from '@/hooks/useSearchHistory';
-import { useTheme } from '@/hooks/useTheme';
-import { cn } from '@/lib/utils';
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Search, Settings as SettingsIcon, HardDrive, Loader2, ShieldAlert } from 'lucide-react'
+import { SearchInput } from '@/components/search/SearchInput'
+import { ResultList } from '@/components/search/ResultList'
+import { DragDropZone } from '@/components/search/DragDropZone'
+import { SettingsPanel } from '@/components/settings/SettingsPanel'
+import { TitleBar } from '@/components/ui/title-bar'
+import { NotificationContainer, useNotifications } from '@/components/ui/notification'
+import { ErrorBoundary } from '@/components/ui/error-boundary'
+import { Button } from '@/components/ui/button'
+import { useFileSearch } from '@/hooks/useFileSearch'
+import { useIndexing } from '@/hooks/useIndexing'
+import { useGlobalHotkeys } from '@/hooks/useHotkeys'
+import { useTheme } from '@/hooks/useTheme'
 
 function App() {
   const {
-    searchQuery,
-    setSearchQuery,
-    searchResults,
+    query,
+    rows,
+    total,
+    elapsedMs,
     isLoading,
+    hasMore,
     error,
-    filters,
-    currentPage,
-    totalPages,
-    hasNextPage,
-    hasPrevPage,
-    itemsPerPage,
     search,
-    updateFilters,
+    loadMore,
     openFile,
     revealFile,
-    goToPage,
-    nextPage,
-    prevPage
-  } = useFileSearch();
+    copyPath,
+    trashFile,
+  } = useFileSearch()
 
-  const { addToHistory } = useSearchHistory();
-  const { resolvedTheme } = useTheme();
+  useTheme()
+  const { notifications, addNotification, removeNotification } = useNotifications()
+  const [showSettings, setShowSettings] = useState(false)
 
-  // Enable global hotkeys
-  useGlobalHotkeys();
-
-  const [isIndexing, setIsIndexing] = useState(false);
-  const [fileCount, setFileCount] = useState(0);
-  const [indexingProgress, setIndexingProgress] = useState(0);
-  const [showSettings, setShowSettings] = useState(false);
-  const [showOnboarding, setShowOnboarding] = useState(false);
-  const [isFirstRun, setIsFirstRun] = useState(false);
-
-  const { notifications, addNotification, removeNotification } = useNotifications();
-
-  // Check file count and first run status on startup
-  useEffect(() => {
-    const checkFileCount = async () => {
-      try {
-        const response = await window.fileSearchAPI.getFileCount();
-        if (response.success) {
-          setFileCount(response.data.count);
-
-          // Check if this is first run - only show onboarding if no files AND haven't seen onboarding
-          const hasSeenOnboarding = localStorage.getItem('file-search-onboarding-completed');
-          const hasAutoIndexed = localStorage.getItem('file-search-auto-indexed');
-
-          if (!hasSeenOnboarding && response.data.count === 0 && !hasAutoIndexed) {
-            setIsFirstRun(true);
-            setShowOnboarding(true);
-          }
-        }
-      } catch (err) {
-        console.error('Failed to get file count:', err);
-      }
-    };
-
-    checkFileCount();
-  }, []);
-
-  // Listen for indexing events
-  useEffect(() => {
-    const handleIndexingProgress = (progress: any) => {
-      setIsIndexing(progress.isIndexing);
-      setIndexingProgress(progress.progress);
-      if (progress.filesProcessed) {
-        setFileCount(progress.filesProcessed);
-      }
-    };
-
-    const handleIndexingComplete = () => {
-      setIsIndexing(false);
-      setIndexingProgress(100);
-      // Refresh file count
-      window.fileSearchAPI.getFileCount().then(response => {
-        if (response.success) {
-          setFileCount(response.data.count);
-
-          // Show completion notification only if we have indexed files
-          if (response.data.count > 0) {
-            addNotification({
-              type: 'success',
-              title: 'Indexing completed',
-              message: `Successfully indexed ${response.data.count.toLocaleString()} files.`,
-              duration: 4000
-            });
-          }
-        }
-      });
-    };
-
-    const handleIndexingError = (error: string) => {
-      setIsIndexing(false);
+  const { isIndexing, progress, fileCount, currentPath, deniedPaths, startIndexing } = useIndexing({
+    onComplete: (count, denied) => {
       addNotification({
-        type: 'error',
-        title: 'Indexing failed',
-        message: error,
-        duration: 8000
-      });
-    };
-
-    window.fileSearchAPI.onIndexingProgress(handleIndexingProgress);
-    window.fileSearchAPI.onIndexingComplete(handleIndexingComplete);
-    window.fileSearchAPI.onIndexingError(handleIndexingError);
-
-    // Window API event listeners with proper cleanup
-    const handleFocusSearch = () => {
-      const searchInput = document.querySelector('input[type="text"]') as HTMLInputElement;
-      searchInput?.focus();
-    };
-
-    const handleOpenSettings = () => {
-      setShowSettings(true);
-    };
-
-    const handleAutoStartIndexing = () => {
-      const hasAutoIndexed = localStorage.getItem('file-search-auto-indexed');
-
-      // Only auto-index if we haven't done it before, no files exist, and not currently indexing
-      if (fileCount === 0 && !hasAutoIndexed && !isIndexing) {
-        localStorage.setItem('file-search-auto-indexed', 'true');
-        handleStartIndexing();
+        type: 'success',
+        title: 'Indexing complete',
+        message: `${count.toLocaleString()} items indexed.`,
+        duration: 4000,
+      })
+      if (denied.length > 0) {
         addNotification({
-          type: 'info',
-          title: 'Auto-indexing started',
-          message: 'File Search is scanning your drives for the first time.',
-          duration: 5000
-        });
+          type: 'warning',
+          title: `${denied.length} folders could not be read`,
+          message: 'Grant Full Disk Access so Seekr can index them.',
+          duration: 10000,
+        })
       }
-    };
+    },
+    onError: (message) =>
+      addNotification({ type: 'error', title: 'Indexing failed', message, duration: 8000 }),
+  })
 
-    const handleStartIndexingFromTray = () => {
-      handleStartIndexing();
-    };
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  useGlobalHotkeys({ searchInputRef, onStartIndexing: () => void startIndexing() })
 
-    const handleShowTrayNotification = () => {
-      addNotification({
-        type: 'info',
-        title: 'File Search minimized to tray',
-        message: 'The app is still running in the background. Use Ctrl+Shift+F to show it again.',
-        duration: 8000
-      });
-    };
-
-    // Add listeners
-    window.windowAPI?.onFocusSearch(handleFocusSearch);
-    window.windowAPI?.onOpenSettings(handleOpenSettings);
-    window.windowAPI?.onAutoStartIndexing(handleAutoStartIndexing);
-    window.windowAPI?.onStartIndexingFromTray(handleStartIndexingFromTray);
-    window.windowAPI?.onShowTrayNotification(handleShowTrayNotification);
-
+  // Tray and menu commands. Mounts once; every handler below is stable.
+  useEffect(() => {
+    const unsubscribers = [
+      window.seekr.events.onFocusSearch(() => searchInputRef.current?.focus()),
+      window.seekr.events.onOpenSettings(() => setShowSettings(true)),
+      window.seekr.events.onStartIndexingFromTray(() => void startIndexing()),
+      window.seekr.events.onWatcherLimit(() =>
+        addNotification({
+          type: 'warning',
+          title: 'Live updates are limited',
+          message: 'The system watch limit was reached. Raise fs.inotify.max_user_watches.',
+          duration: 10000,
+        }),
+      ),
+    ]
     return () => {
-      // Clean up all listeners
-      window.fileSearchAPI.removeAllListeners('indexing-progress');
-      window.fileSearchAPI.removeAllListeners('indexing-complete');
-      window.fileSearchAPI.removeAllListeners('indexing-error');
-      window.fileSearchAPI.removeAllListeners('focus-search');
-      window.fileSearchAPI.removeAllListeners('open-settings');
-      window.fileSearchAPI.removeAllListeners('auto-start-indexing');
-      window.fileSearchAPI.removeAllListeners('start-indexing-from-tray');
-      window.fileSearchAPI.removeAllListeners('show-tray-notification');
-    };
-  }, [fileCount, addNotification]);
-
-  const handleStartIndexing = async (customPaths?: string[]) => {
-    // Prevent multiple indexing operations
-    if (isIndexing) {
-      console.log('Indexing already in progress, skipping...');
-      return;
+      for (const unsubscribe of unsubscribers) unsubscribe()
     }
+  }, [startIndexing, addNotification])
 
-    try {
-      setIsIndexing(true);
-      setIndexingProgress(0);
+  const handleFolderDrop = useCallback(
+    (folderPath: string) => void startIndexing([folderPath]),
+    [startIndexing],
+  )
 
-      let pathsToIndex: string[] = [];
-
-      if (customPaths && customPaths.length > 0) {
-        // Use custom paths if provided
-        pathsToIndex = customPaths.filter(path => typeof path === 'string');
-      } else {
-        // Get system drives
-        const drivesResponse = await window.fileSearchAPI.getSystemDrives();
-        if (drivesResponse.success && drivesResponse.data?.drives) {
-          // Extract just the path strings from drive objects
-          pathsToIndex = drivesResponse.data.drives.map((drive: any) => {
-            if (typeof drive === 'string') {
-              return drive;
-            } else if (drive && typeof drive.letter === 'string') {
-              return drive.letter;
-            } else if (drive && typeof drive.path === 'string') {
-              return drive.path;
-            }
-            return null;
-          }).filter((path: string | null): path is string => path !== null);
-        }
-
-        if (pathsToIndex.length === 0) {
-          // Fallback to user-friendly paths instead of system drives
-          if (process.platform === 'win32') {
-            pathsToIndex = [
-              'C:\\Users',
-              'C:\\Documents and Settings', // For older Windows
-              'D:\\' // Common secondary drive
-            ].filter(path => path); // Filter out any undefined paths
-          } else {
-            pathsToIndex = ['/home', '/Users']; // User directories on Unix-like systems
-          }
-        }
-      }
-
-      console.log('Starting indexing with paths:', pathsToIndex);
-
-      // Show immediate feedback
-      addNotification({
-        type: 'info',
-        title: 'Starting indexing...',
-        message: `Scanning: ${pathsToIndex.join(', ')}`,
-        duration: 3000
-      });
-
-      const response = await window.fileSearchAPI.startIndexing({
-        paths: pathsToIndex,
-        excludePaths: [
-          'node_modules',
-          '.git',
-          'System Volume Information',
-          '$Recycle.Bin',
-          'pagefile.sys',
-          'hiberfil.sys'
-        ]
-      });
-
-      if (!response.success) {
-        console.error('Failed to start indexing:', response.error);
-        setIsIndexing(false);
-        addNotification({
-          type: 'error',
-          title: 'Indexing failed',
-          message: response.error || 'Unknown error occurred',
-          duration: 6000
-        });
-      }
-    } catch (err) {
-      console.error('Failed to start indexing:', err);
-      setIsIndexing(false);
-      addNotification({
-        type: 'error',
-        title: 'Indexing failed',
-        message: err instanceof Error ? err.message : 'Unknown error occurred',
-        duration: 6000
-      });
-    }
-  };
-
-  const handleFolderDrop = async (folderPath: string) => {
-    await handleStartIndexing([folderPath]);
-    addNotification({
-      type: 'success',
-      title: 'Folder added for indexing',
-      message: `Started indexing: ${folderPath}`,
-      duration: 4000
-    });
-  };
-
-  const handleOnboardingComplete = () => {
-    setShowOnboarding(false);
-    localStorage.setItem('file-search-onboarding-completed', 'true');
-
-    addNotification({
-      type: 'success',
-      title: 'Welcome to File Search!',
-      message: 'The app is now running in your system tray. Use Ctrl+Shift+F to access it quickly.',
-      duration: 6000
-    });
-  };
-
-  const handleOnboardingStartIndexing = () => {
-    // Mark that we've started auto-indexing from onboarding
-    localStorage.setItem('file-search-auto-indexed', 'true');
-    handleStartIndexing();
-  };
+  const isEmptyIndex = fileCount === 0 && !isIndexing
+  const statusText = isIndexing
+    ? `Indexing… ${progress.toFixed(0)}% · ${fileCount.toLocaleString()} found`
+    : `${fileCount.toLocaleString()} items indexed`
 
   return (
     <ErrorBoundary>
       <DragDropZone onFolderDrop={handleFolderDrop}>
-        <div className="min-h-screen bg-gradient-to-br from-background via-background to-muted/20 flex flex-col">
-          {/* Custom Title Bar */}
+        {/*
+          h-screen with a min-h-0 flex child, so the RESULT LIST scrolls rather
+          than the document. The old shell was `min-h-[500px]` with no bound, so
+          its scroll area resolved to auto height and the whole page scrolled.
+        */}
+        <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
           <TitleBar />
 
-          {/* Header */}
-          <header className="border-b bg-background/80 backdrop-blur-sm sticky top-0 z-40">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2">
-                <Search className="h-6 w-6 text-primary" />
-                <h1 className="text-xl font-bold">File Search</h1>
-              </div>
-
-              {fileCount > 0 && (
-                <Badge variant="secondary" className="text-xs">
-                  {fileCount.toLocaleString()} files indexed
-                </Badge>
-              )}
-
-              {isIndexing && (
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline" className="text-xs">
-                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                    Indexing {indexingProgress.toFixed(0)}%
-                  </Badge>
-                  <Badge variant="secondary" className="text-xs">
-                    {fileCount.toLocaleString()} files
-                  </Badge>
-                </div>
-              )}
-            </div>
-
+          <header className="shrink-0 border-b px-3 py-2">
             <div className="flex items-center gap-2">
-              {fileCount === 0 && !isIndexing && (
-                <Button
-                  onClick={() => handleStartIndexing()}
-                  size="sm"
-                  data-action="start-indexing"
-                >
-                  <HardDrive className="h-4 w-4 mr-2" />
-                  Start Indexing
-                </Button>
-              )}
-
+              <Search className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <SearchInput
+                ref={searchInputRef}
+                value={query}
+                onChange={search}
+                className="flex-1"
+              />
               <Button
                 variant="ghost"
                 size="sm"
+                aria-label="Settings"
                 onClick={() => setShowSettings(true)}
               >
-                <Settings className="h-4 w-4" />
+                <SettingsIcon className="h-4 w-4" />
               </Button>
             </div>
-          </div>
-        </div>
-      </header>
+          </header>
 
-      {/* Main Content */}
-      <main className="container mx-auto px-4 py-8">
-        <div className="max-w-6xl mx-auto">
-          {/* Search Section */}
-          <div className="mb-8 space-y-4">
-            <SearchInput
-              value={searchQuery}
-              onChange={setSearchQuery}
-              onSearch={search}
-            />
+          {error && (
+            <div role="alert" className="shrink-0 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {error}
+            </div>
+          )}
 
-            <SearchFilters
-              filters={filters}
-              onFiltersChange={updateFilters}
-            />
+          {deniedPaths.length > 0 && (
+            <button
+              type="button"
+              onClick={() => void window.seekr.system.openFullDiskAccessSettings()}
+              className="flex shrink-0 items-center gap-2 bg-amber-500/10 px-3 py-2 text-left text-sm text-amber-700 hover:bg-amber-500/15 dark:text-amber-400"
+            >
+              <ShieldAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="flex-1">
+                {deniedPaths.length} folders are unreadable. Grant Full Disk Access to index them.
+              </span>
+              <span className="shrink-0 underline">Open Settings</span>
+            </button>
+          )}
 
-            {error && (
-              <Card className="p-4 border-destructive bg-destructive/5">
-                <p className="text-sm text-destructive">{error}</p>
-              </Card>
+          <main className="flex min-h-0 flex-1 flex-col">
+            {isEmptyIndex ? (
+              <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
+                <HardDrive className="h-8 w-8 text-muted-foreground" aria-hidden="true" />
+                <div>
+                  <p className="text-sm font-medium">No index yet</p>
+                  <p className="text-sm text-muted-foreground">
+                    Build one to start searching, or drop a folder here.
+                  </p>
+                </div>
+                <Button size="sm" onClick={() => void startIndexing()}>
+                  Build index
+                </Button>
+              </div>
+            ) : (
+              <ResultList
+                rows={rows}
+                isLoading={isLoading}
+                hasMore={hasMore}
+                onLoadMore={loadMore}
+                onOpen={(row) => void openFile(row.fullPath)}
+                onReveal={(row) => void revealFile(row.fullPath)}
+                onCopyPath={(row) => void copyPath(row.fullPath)}
+                onTrash={(row) => void trashFile(row.fullPath)}
+                emptyMessage={query.trim() ? `No matches for "${query.trim()}"` : 'Type to search'}
+              />
             )}
-          </div>
+          </main>
 
-          {/* Results Section */}
-          <div className={cn(
-            "rounded-lg border shadow-sm min-h-[500px] transition-all duration-200",
-            resolvedTheme === 'dark'
-              ? "bg-background/60 backdrop-blur-sm"
-              : "bg-background/80 backdrop-blur-sm"
-          )}>
-            <SearchResults
-              results={searchResults}
-              isLoading={isLoading}
-              onOpenFile={openFile}
-              onRevealFile={revealFile}
-              currentPage={currentPage}
-              totalPages={totalPages}
-              hasNextPage={hasNextPage}
-              hasPrevPage={hasPrevPage}
-              itemsPerPage={itemsPerPage}
-              onPageChange={goToPage}
-              onNextPage={nextPage}
-              onPrevPage={prevPage}
-            />
-          </div>
-        </div>
-      </main>
+          {/* Status bar: index freshness and query cost, which the app never showed. */}
+          <footer className="flex shrink-0 items-center justify-between border-t px-3 py-1.5 text-xs text-muted-foreground">
+            <span aria-live="polite" className="truncate">
+              {isIndexing && <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />}
+              {query.trim() && total !== null
+                ? `${total.toLocaleString()} result${total === 1 ? '' : 's'} · ${elapsedMs}ms`
+                : statusText}
+            </span>
+            <span className="ml-3 truncate text-right opacity-70">
+              {isIndexing ? currentPath : '↑↓ navigate · ⏎ open · ⌘⏎ reveal'}
+            </span>
+          </footer>
 
-          {/* Onboarding Wizard */}
-          <OnboardingWizard
-            isVisible={showOnboarding}
-            onComplete={handleOnboardingComplete}
-            onStartIndexing={handleOnboardingStartIndexing}
-          />
-
-          {/* Settings Panel */}
-          <SettingsPanel
-            open={showSettings}
-            onOpenChange={setShowSettings}
-          />
-
-          {/* Notifications */}
-          <NotificationContainer
-            notifications={notifications}
-            onRemove={removeNotification}
-          />
+          <SettingsPanel open={showSettings} onOpenChange={setShowSettings} />
+          <NotificationContainer notifications={notifications} onRemove={removeNotification} />
         </div>
       </DragDropZone>
     </ErrorBoundary>
-  );
+  )
 }
 
-export default App;
+export default App

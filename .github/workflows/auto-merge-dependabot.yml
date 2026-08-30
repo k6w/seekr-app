@@ -4,19 +4,37 @@ on:
   pull_request_target:
     types: [opened, synchronize]
 
+permissions:
+  contents: read
+
 jobs:
   auto-merge:
     runs-on: ubuntu-latest
     if: github.actor == 'dependabot[bot]'
-    
+
     permissions:
       pull-requests: write
       contents: write
 
     steps:
-      - name: Auto-merge Dependabot PRs
+      # Wait for CI before merging anything. Previously this merged on open,
+      # with no gate at all — and because the release workflow also ran on
+      # pushes to the default branch, a dependency bump could reach a published
+      # binary unattended. Releases are now tag-only, and this waits for the
+      # type-check, lint, tests and the packaged smoke test.
+      - name: Wait for CI to pass
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          running-workflow-name: auto-merge
+          wait-interval: 20
+          allowed-conclusions: success
+
+      - name: Merge patch and minor updates
         uses: fastify/github-action-merge-dependabot@v3
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Majors stay manual: they are where the breaking changes are.
           target: minor
           merge-method: squash

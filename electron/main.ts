@@ -1,292 +1,481 @@
-import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, globalShortcut } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  globalShortcut,
+  ipcMain,
+  Menu,
+  nativeImage,
+  session,
+  shell,
+  Tray,
+} from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
-import { DatabaseService } from './services/database'
-import { FileIndexer } from './services/indexer'
-import { FileWatcher } from './services/file-watcher'
+import log from 'electron-log/main'
 import { IpcHandlers } from './services/ipc-handlers'
+import { SettingsStore } from './services/settings'
+import { IndexReader } from './services/index-reader'
+import { getSystemInfo } from './services/platform'
+import { EngineHost } from './engine/host'
+import { ENGINE_PORT_CHANNEL } from './engine/protocol'
+import { IpcChannel, IpcEvent } from './ipc/channels'
+import { createOverlayWindow, resizeOverlay, toggleOverlay } from './windows/overlay'
+import { buildApplicationMenu } from './windows/menu'
+import { checkForUpdatesInteractive, initializeUpdater } from './services/updater'
 
-// const require = createRequire(import.meta.url) // Unused
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-// The built directory structure
-//
-// ├─┬─┬ dist
-// │ │ └── index.html
-// │ │
-// │ ├─┬ dist-electron
-// │ │ ├── main.js
-// │ │ └── preload.mjs
-// │
 process.env.APP_ROOT = path.join(__dirname, '..')
 
-// 🚧 Use ['ENV_NAME'] avoid vite:define plugin - Vite@2.x
 export const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
-export const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron')
 export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
 
-process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'public') : RENDERER_DIST
+process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
+  ? path.join(process.env.APP_ROOT, 'public')
+  : RENDERER_DIST
 
-let win: BrowserWindow | null
+let win: BrowserWindow | null = null
+let overlay: BrowserWindow | null = null
 let tray: Tray | null = null
-let db: DatabaseService
-let indexer: FileIndexer
-let fileWatcher: FileWatcher
-let ipcHandlers: IpcHandlers
+let settings: SettingsStore | null = null
+let ipcHandlers: IpcHandlers | null = null
+let engineHost: EngineHost | null = null
+let indexReader: IndexReader | null = null
 let isQuitting = false
-let hasTriggeredAutoIndexing = false
 
-// Global error handling
-process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error);
-  // Don't exit the process, just log the error
-});
+log.initialize()
+log.errorHandler.startCatching({ showDialog: false })
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  // Don't exit the process, just log the error
-});
+// Previously both were swallowed with a "don't exit" comment, leaving the app
+// running in an unknown state with nothing recorded anywhere a user could find.
+process.on('uncaughtException', (error) => log.error('Uncaught exception:', error))
+process.on('unhandledRejection', (reason) => log.error('Unhandled rejection:', reason))
 
-function createTray() {
-  // Create tray icon
-  const iconPath = path.join(process.env.VITE_PUBLIC || '', 'icon.png')
-  let trayIcon: Electron.NativeImage
+/**
+ * A second instance would open a second writer against the same WAL database,
+ * register the same global shortcut, and create a second tray.
+ */
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!win) return
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+  })
+  void bootstrap()
+}
 
-  try {
-    trayIcon = nativeImage.createFromPath(iconPath)
-    if (trayIcon.isEmpty()) {
-      // Create a simple programmatic icon if file doesn't exist
-      trayIcon = nativeImage.createFromDataURL('data:image/svg+xml;base64,' +
-        Buffer.from(`<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="7" cy="7" r="3" stroke="currentColor" stroke-width="1" fill="none"/>
-          <path d="m9.5 9.5 2.5 2.5" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-        </svg>`).toString('base64'))
+// ---------------------------------------------------------------- security --
+
+/**
+ * Blocks the two ways a renderer can navigate itself somewhere we do not
+ * control: `window.open` and in-place navigation. Both would otherwise load
+ * arbitrary content with our preload attached.
+ */
+function hardenWebContents(contents: Electron.WebContents): void {
+  contents.setWindowOpenHandler(({ url }) => {
+    // External links belong in the user's browser, never in an app window.
+    if (url.startsWith('https://')) void shell.openExternal(url)
+    return { action: 'deny' }
+  })
+
+  contents.on('will-navigate', (event, url) => {
+    const isDevServer = VITE_DEV_SERVER_URL && url.startsWith(VITE_DEV_SERVER_URL)
+    if (!isDevServer && !url.startsWith('file://')) {
+      event.preventDefault()
+      log.warn('Blocked navigation to', url)
     }
-  } catch {
-    // Fallback to a simple icon if file doesn't exist
-    trayIcon = nativeImage.createFromDataURL('data:image/svg+xml;base64,' +
-      Buffer.from(`<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="7" cy="7" r="3" stroke="currentColor" stroke-width="1" fill="none"/>
-        <path d="m9.5 9.5 2.5 2.5" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-      </svg>`).toString('base64'))
-  }
+  })
 
-  tray = new Tray(trayIcon)
+  // No part of this app uses <webview>.
+  contents.on('will-attach-webview', (event) => event.preventDefault())
 
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: 'Show Seekr',
-      click: () => {
-        win?.show()
-        win?.focus()
-      }
-    },
-    {
-      label: 'Search...',
-      accelerator: 'CmdOrCtrl+F',
-      click: () => {
-        win?.show()
-        win?.focus()
-        win?.webContents.send('focus-search')
-      }
-    },
-    { type: 'separator' },
-    {
-      label: 'Start Indexing',
-      click: () => {
-        win?.webContents.send('start-indexing-from-tray')
-      }
-    },
-    { type: 'separator' },
-    {
-      label: 'Settings',
-      click: () => {
-        win?.show()
-        win?.focus()
-        win?.webContents.send('open-settings')
-      }
-    },
-    { type: 'separator' },
-    {
-      label: 'Quit',
-      accelerator: process.platform === 'darwin' ? 'Cmd+Q' : 'Ctrl+Q',
-      click: () => {
-        isQuitting = true
-        app.quit()
-      }
-    }
-  ])
+  /**
+   * Renderer console and load failures, into the app log.
+   *
+   * Without this, a renderer that throws on boot shows the user a blank window
+   * and leaves no trace anywhere they can reach -- devtools are not available
+   * in a packaged build.
+   */
+  contents.on('console-message', (event) => {
+    const line = `[renderer] ${event.message} (${event.sourceId}:${event.lineNumber})`
+    if (event.level === 'error') log.error(line)
+    else if (event.level === 'warning') log.warn(line)
+    else log.info(line)
+  })
 
-  tray.setContextMenu(contextMenu)
-  tray.setToolTip('Seekr - Lightning fast file finder')
+  contents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    log.error(`Renderer failed to load ${validatedURL}: ${errorDescription} (${errorCode})`)
+  })
 
-  // Double click to show window
-  tray.on('double-click', () => {
-    win?.show()
-    win?.focus()
+  contents.on('render-process-gone', (_event, details) => {
+    log.error('Renderer process gone:', details.reason, details.exitCode)
+  })
+
+  contents.on('preload-error', (_event, preloadPath, error) => {
+    log.error(`Preload failed at ${preloadPath}:`, error)
   })
 }
 
-async function initializeServices() {
-  try {
-    // Initialize database
-    db = new DatabaseService()
-    await db.initialize()
+/**
+ * Delivered as a response header as well as a meta tag, so the dev server is
+ * covered too. Styles need 'unsafe-inline' for Tailwind's runtime injection;
+ * scripts get no such exemption.
+ */
+function applyContentSecurityPolicy(): void {
+  const policy = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    // The renderer reaches the engine over a MessagePort and main over IPC, so
+    // it needs no network access. The dev server needs its HMR websocket.
+    VITE_DEV_SERVER_URL ? "connect-src 'self' ws: http://localhost:*" : "connect-src 'none'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+  ].join('; ')
 
-    // Initialize indexer
-    indexer = new FileIndexer(db)
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: { ...details.responseHeaders, 'Content-Security-Policy': [policy] },
+    })
+  })
 
-    // Initialize file watcher
-    fileWatcher = new FileWatcher(db)
-
-    // Setup IPC handlers
-    ipcHandlers = new IpcHandlers(db, indexer, fileWatcher)
-    // IPC handlers are automatically registered in the constructor
-
-    console.log('Services initialized successfully')
-  } catch (error) {
-    console.error('Failed to initialize services:', error)
-  }
+  // Nothing here needs camera, mic, geolocation or notifications.
+  session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
 }
 
-function createWindow() {
+// ------------------------------------------------------------------ window --
+
+/** Window options that differ per platform. */
+function platformWindowOptions(): Electron.BrowserWindowConstructorOptions {
+  const info = getSystemInfo()
+
+  if (info.isMac) {
+    return {
+      titleBarStyle: 'hiddenInset',
+      trafficLightPosition: { x: 16, y: 14 },
+      vibrancy: 'sidebar',
+      visualEffectState: 'followWindow',
+      backgroundColor: '#00000000',
+    }
+  }
+
+  if (info.isWindows) {
+    return {
+      titleBarStyle: 'hidden',
+      titleBarOverlay: { color: '#00000000', symbolColor: '#8a8a8a', height: 36 },
+      // `transparent: true` conflicts with backgroundMaterial and renders the
+      // window black, so it is deliberately not set.
+      ...(info.supportsMica ? { backgroundMaterial: 'mica' as const } : {}),
+      backgroundColor: info.supportsMica ? '#00000000' : '#141414',
+    }
+  }
+
+  // Linux compositors vary too much for transparency to be safe by default.
+  return { frame: true, backgroundColor: '#141414' }
+}
+
+function createWindow(): void {
   win = new BrowserWindow({
     width: 1200,
     height: 800,
-    minWidth: 800,
-    minHeight: 600,
-    frame: false, // Remove default frame for custom controls
-    transparent: true, // Enable transparency for glassmorphism
-    vibrancy: 'under-window', // macOS vibrancy effect
-    backgroundMaterial: 'acrylic', // Windows acrylic effect
+    minWidth: 720,
+    minHeight: 480,
+    show: false,
     icon: path.join(process.env.VITE_PUBLIC, 'icon.png'),
+    ...platformWindowOptions(),
     webPreferences: {
-      preload: path.join(__dirname, 'preload.mjs'),
-      nodeIntegration: false,
+      preload: path.join(__dirname, 'preload.cjs'),
+      // Explicit rather than relying on defaults, so an upgrade cannot
+      // silently weaken them.
+      sandbox: true,
       contextIsolation: true,
+      nodeIntegration: false,
+      webviewTag: false,
+      spellcheck: false,
     },
-    show: false, // Don't show until ready
-    skipTaskbar: false,
   })
 
-  // Window event handlers
-  win.once('ready-to-show', () => {
-    win?.show()
+  hardenWebContents(win.webContents)
 
-    // Start automatic indexing on first run (only once)
-    setTimeout(async () => {
-      if (hasTriggeredAutoIndexing) {
-        return;
-      }
+  win.once('ready-to-show', () => win?.show())
 
-      try {
-        const response = await win?.webContents.executeJavaScript(`
-          window.fileSearchAPI?.getFileCount().then(r => r.data?.count || 0)
-        `)
-
-        if (response === 0) {
-          hasTriggeredAutoIndexing = true;
-          // Auto-start indexing if no files are indexed
-          win?.webContents.send('auto-start-indexing')
-        }
-      } catch (error) {
-        console.log('Auto-indexing check failed:', error)
-      }
-    }, 2000)
+  // Give this renderer its own direct channel to the engine, so search traffic
+  // never passes through the main process.
+  win.webContents.on('did-finish-load', () => {
+    if (win) attachEngine(win)
   })
+
+  // Replaces the renderer's 1s `isMaximized()` IPC poll.
+  const emitMaximized = () =>
+    win?.webContents.send(IpcEvent.WindowMaximizedChanged, win.isMaximized())
+  win.on('maximize', emitMaximized)
+  win.on('unmaximize', emitMaximized)
 
   win.on('close', (event) => {
-    if (!isQuitting) {
-      event.preventDefault()
-      win?.hide()
-
-      // Show notification on first minimize
-      if (process.platform === 'win32') {
-        win?.webContents.send('show-tray-notification')
-      }
-    }
-  })
-
-  win.on('minimize', (event: Electron.Event) => {
+    if (isQuitting) return
     event.preventDefault()
     win?.hide()
   })
 
+  // 'minimize' is deliberately not intercepted. The old code turned it into
+  // hide(), which broke the standard minimize-to-Dock gesture on macOS.
+
+  win.on('closed', () => {
+    win = null
+  })
+
   if (VITE_DEV_SERVER_URL) {
-    win.loadURL(VITE_DEV_SERVER_URL)
-    win.webContents.openDevTools()
+    void win.loadURL(VITE_DEV_SERVER_URL)
+    win.webContents.openDevTools({ mode: 'detach' })
   } else {
-    win.loadFile(path.join(RENDERER_DIST, 'index.html'))
+    void win.loadFile(path.join(RENDERER_DIST, 'index.html'))
   }
 }
 
-// Quit when all windows are closed, except on macOS. There, it's common
-// for applications and their menu bar to stay active until the user quits
-// explicitly with Cmd + Q.
-app.on('window-all-closed', async () => {
-  if (process.platform !== 'darwin') {
-    // Clean up services
-    if (indexer) {
-      indexer.stopIndexing()
-    }
-    if (fileWatcher) {
-      await fileWatcher.stopWatching()
-    }
-    if (db) {
-      await db.close()
-    }
-    app.quit()
-    win = null
+function attachEngine(window: BrowserWindow): void {
+  if (!engineHost?.attachRenderer(window.webContents, ENGINE_PORT_CHANNEL)) {
+    log.error('Engine is not running; this renderer has no search capability')
   }
-})
+}
 
-app.on('activate', () => {
-  // On OS X it's common to re-create a window in the app when the
-  // dock icon is clicked and there are no other windows open.
-  if (BrowserWindow.getAllWindows().length === 0) {
+function createOverlay(): void {
+  overlay = createOverlayWindow({
+    preloadPath: path.join(__dirname, 'preload.cjs'),
+    devServerUrl: VITE_DEV_SERVER_URL,
+    rendererDist: RENDERER_DIST,
+    // The palette gets its own port to the engine, so summoning it never
+    // competes with the main window for the main process.
+    onCreated: (window) => {
+      hardenWebContents(window.webContents)
+      attachEngine(window)
+    },
+  })
+}
+
+function showWindow(): void {
+  if (!win) {
     createWindow()
+    return
   }
-})
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+}
 
-// Custom window controls IPC handlers
-ipcMain.handle('window-minimize', () => {
-  win?.minimize()
-})
+// -------------------------------------------------------------------- tray --
 
-ipcMain.handle('window-maximize', () => {
-  if (win?.isMaximized()) {
-    win.unmaximize()
-  } else {
-    win?.maximize()
-  }
-})
+function createTray(): void {
+  const info = getSystemInfo()
+  const source = nativeImage.createFromPath(path.join(process.env.VITE_PUBLIC, 'icon.png'))
 
-ipcMain.handle('window-close', () => {
-  win?.hide()
-})
+  // The source icon is ~1000px. Handing that to Tray produces an oversized
+  // menu-bar icon; macOS additionally needs a template image so it inverts
+  // correctly in light and dark menu bars.
+  const trayIcon = source.isEmpty()
+    ? nativeImage.createEmpty()
+    : source.resize({ width: 16, height: 16 })
+  if (info.isMac) trayIcon.setTemplateImage(true)
 
-ipcMain.handle('window-is-maximized', () => {
-  return win?.isMaximized() || false
-})
+  tray = new Tray(trayIcon)
+  tray.setToolTip('Seekr')
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'Show Seekr', click: showWindow },
+      {
+        label: 'Search…',
+        click: () => {
+          showWindow()
+          win?.webContents.send(IpcEvent.FocusSearch)
+        },
+      },
+      { type: 'separator' },
+      {
+        label: 'Rebuild Index',
+        click: () => {
+          showWindow()
+          win?.webContents.send(IpcEvent.StartIndexingFromTray)
+        },
+      },
+      {
+        label: 'Settings…',
+        click: () => {
+          showWindow()
+          win?.webContents.send(IpcEvent.OpenSettings)
+        },
+      },
+      { type: 'separator' },
+      {
+        label: 'Quit Seekr',
+        accelerator: info.isMac ? 'Cmd+Q' : 'Ctrl+Q',
+        click: () => {
+          isQuitting = true
+          app.quit()
+        },
+      },
+    ]),
+  )
 
-ipcMain.handle('app-quit', () => {
-  isQuitting = true
-  app.quit()
-})
+  // Single click is the Windows and Linux convention; macOS opens the menu.
+  if (!info.isMac) tray.on('click', showWindow)
+}
 
-// Global shortcut for showing app
-app.whenReady().then(async () => {
-  await initializeServices()
-  createWindow()
-  createTray()
+// ---------------------------------------------------------------- lifecycle --
 
-  // Register global shortcut
-  globalShortcut.register('CmdOrCtrl+Shift+F', () => {
-    if (win?.isVisible()) {
-      win.hide()
-    } else {
-      win?.show()
-      win?.focus()
+function registerWindowHandlers(): void {
+  ipcMain.handle(IpcChannel.WindowMinimize, () => win?.minimize())
+  ipcMain.handle(IpcChannel.WindowMaximizeToggle, () => {
+    if (!win) return
+    if (win.isMaximized()) win.unmaximize()
+    else win.maximize()
+  })
+  ipcMain.handle(IpcChannel.WindowHide, () => win?.hide())
+  ipcMain.handle(IpcChannel.WindowIsMaximized, () => win?.isMaximized() ?? false)
+  ipcMain.handle(IpcChannel.OverlayResize, (_event, height: unknown) => {
+    if (overlay && typeof height === 'number' && Number.isFinite(height)) {
+      resizeOverlay(overlay, height)
     }
   })
+  ipcMain.handle(IpcChannel.AppQuit, () => {
+    isQuitting = true
+    app.quit()
+  })
+}
+
+function registerGlobalShortcut(): void {
+  const accelerator = settings?.get().globalHotkey ?? 'CmdOrCtrl+Shift+F'
+  // The hotkey summons the palette, not the browsing window. That is the
+  // whole point of having two surfaces: the fast one is what the muscle
+  // memory reaches for.
+  const registered = globalShortcut.register(accelerator, () => {
+    if (overlay) toggleOverlay(overlay)
+    else showWindow()
+  })
+
+  // The old code ignored this return value, so a conflicting shortcut failed
+  // silently and the user had no way to find out.
+  if (!registered) {
+    log.warn(`Global shortcut "${accelerator}" could not be registered (already in use?)`)
+  }
+}
+
+/** Runs on every exit path, on every platform. */
+async function shutdown(): Promise<void> {
+  globalShortcut.unregisterAll()
+  ipcHandlers?.dispose()
+  indexReader?.close()
+  await engineHost?.stop()
+  overlay?.destroy()
+  overlay = null
+  tray?.destroy()
+  tray = null
+}
+
+async function bootstrap(): Promise<void> {
+  await app.whenReady()
+
+  // Required for correct taskbar grouping and notification identity on Windows.
+  if (process.platform === 'win32') app.setAppUserModelId('com.k6w.seekr')
+  // Lets the xdg-desktop-portal GlobalShortcuts backend identify us on Wayland.
+  if (process.platform === 'linux') app.setDesktopName('seekr.desktop')
+
+  applyContentSecurityPolicy()
+
+  const databasePath = path.join(app.getPath('userData'), 'seekr-index.db')
+
+  settings = new SettingsStore()
+  indexReader = new IndexReader(databasePath)
+  engineHost = new EngineHost(databasePath)
+  engineHost.start()
+
+  ipcHandlers = new IpcHandlers(settings, (fullPath) => indexReader!.has(fullPath))
+
+  const engineReady = await engineHost.whenReady()
+  if (!engineReady) log.error('Engine failed to start within the timeout')
+
+  registerWindowHandlers()
+  createWindow()
+  createOverlay()
+  createTray()
+  registerGlobalShortcut()
+
+  buildApplicationMenu({
+    getMainWindow: () => win,
+    showMainWindow: showWindow,
+    toggleOverlay: () => {
+      if (overlay) toggleOverlay(overlay)
+    },
+    rebuildIndex: () => {
+      showWindow()
+      win?.webContents.send(IpcEvent.StartIndexingFromTray)
+    },
+    openSettings: () => {
+      showWindow()
+      win?.webContents.send(IpcEvent.OpenSettings)
+    },
+    globalHotkey: settings?.get().globalHotkey ?? 'CmdOrCtrl+Shift+F',
+    checkForUpdates: () => void checkForUpdatesInteractive(win),
+  })
+
+  initializeUpdater(() => win)
+
+  // The menu bar is redundant on Windows and Linux, where the window draws its
+  // own chrome, but keeping the menu registered means the accelerators in it
+  // still fire.
+  if (process.platform !== 'darwin') win?.setMenuBarVisibility(false)
+
+  /**
+   * Packaged-app smoke test (scripts/smoke-packaged.cjs).
+   *
+   * Proves the app launched AND the engine process came up with its native
+   * binding loaded -- the failure asarUnpack exists to prevent, which a
+   * "was a file produced?" CI check cannot detect.
+   */
+  if (process.env.SEEKR_SMOKE_TEST === '1') {
+    // Round-trip a real request so this proves the protocol works, not merely
+    // that a process was spawned.
+    const count = engineReady ? await engineHost.selfTest() : null
+    const healthy = count !== null
+    process.stdout.write(
+      healthy
+        ? `SEEKR_SMOKE_OK indexed=${count}\n`
+        : 'SEEKR_SMOKE_FAIL: engine did not answer\n',
+    )
+    isQuitting = true
+    setTimeout(() => app.exit(healthy ? 0 : 1), 500)
+    return
+  }
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    else showWindow()
+  })
+}
+
+app.on('before-quit', () => {
+  isQuitting = true
 })
+
+app.on('will-quit', (event) => {
+  if (!engineHost && !indexReader) return
+  event.preventDefault()
+  void shutdown().finally(() => {
+    engineHost = null
+    indexReader = null
+    app.exit(0)
+  })
+})
+
+// The window closes to the tray, so this only fires once the user really quits.
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit()
+})
+
+// Defence in depth, for any window created outside createWindow().
+app.on('web-contents-created', (_event, contents) => hardenWebContents(contents))

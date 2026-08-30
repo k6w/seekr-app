@@ -11,7 +11,7 @@ dist/
 dist-electron/
 dist-ssr/
 release/
-build/
+# NOTE: build/ is electron-builder buildResources (entitlements, icons) and IS committed.
 out/
 
 # Environment variables
@@ -94,7 +94,10 @@ temp/
 
 # Electron specific
 app/
-packages/
+
+# Rust / native addon build output
+target/
+*.node
 
 # SQLite databases
 *.db

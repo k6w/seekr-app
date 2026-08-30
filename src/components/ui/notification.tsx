@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { X, Info, CheckCircle, AlertTriangle, AlertCircle } from 'lucide-react';
 import { Button } from './button';
 import { cn } from '@/lib/utils';
@@ -114,19 +114,24 @@ export function useNotifications() {
     duration?: number;
   }>>([]);
 
-  const addNotification = (notification: Omit<typeof notifications[0], 'id'>) => {
-    const id = Math.random().toString(36).substr(2, 9);
-    setNotifications(prev => [...prev, { ...notification, id }]);
-    return id;
-  };
+  // All three are stable across renders. They used to be plain functions
+  // recreated every render, which invalidated every effect in App.tsx that
+  // listed addNotification as a dependency -- causing all eight IPC listeners
+  // to be torn down and re-registered on every render.
+  const addNotification = useCallback(
+    (notification: Omit<{ id: string; type: NotificationType; title: string; message?: string; duration?: number }, 'id'>) => {
+      const id = crypto.randomUUID();
+      setNotifications((previous) => [...previous, { ...notification, id }]);
+      return id;
+    },
+    []
+  );
 
-  const removeNotification = (id: string) => {
-    setNotifications(prev => prev.filter(n => n.id !== id));
-  };
+  const removeNotification = useCallback((id: string) => {
+    setNotifications((previous) => previous.filter((n) => n.id !== id));
+  }, []);
 
-  const clearAll = () => {
-    setNotifications([]);
-  };
+  const clearAll = useCallback(() => setNotifications([]), []);
 
   return {
     notifications,

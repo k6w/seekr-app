@@ -44,37 +44,38 @@ export function DragDropZone({
     e.stopPropagation();
   }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    setIsDragOver(false);
-    setDragCounter(0);
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
 
-    const { files } = e.dataTransfer;
-    
-    if (files && files.length > 0) {
-      // Check if any items are directories
-      const items = Array.from(e.dataTransfer.items);
-      const hasDirectories = items.some(item => {
-        const entry = item.webkitGetAsEntry?.();
-        return entry?.isDirectory;
-      });
+      setIsDragOver(false);
+      setDragCounter(0);
 
-      if (hasDirectories && onFolderDrop) {
-        // Handle folder drops
-        items.forEach(item => {
-          const entry = item.webkitGetAsEntry?.();
-          if (entry?.isDirectory) {
-            onFolderDrop(entry.fullPath);
-          }
-        });
+      const { files } = e.dataTransfer;
+      if (!files || files.length === 0) return;
+
+      /**
+       * Resolve REAL filesystem paths.
+       *
+       * This used to read `item.webkitGetAsEntry().fullPath`, which is a
+       * virtual DataTransfer path like "/FolderName" -- not a path on disk --
+       * so every folder drop asked the indexer to crawl something that does
+       * not exist. webUtils.getPathForFile, called in the preload, returns the
+       * real one.
+       */
+      const paths = Array.from(files)
+        .map((file) => window.seekr.file.pathForDropped(file))
+        .filter((value): value is string => Boolean(value));
+
+      if (paths.length > 0 && onFolderDrop) {
+        for (const droppedPath of paths) onFolderDrop(droppedPath);
       } else if (onDrop) {
-        // Handle file drops
         onDrop(files);
       }
-    }
-  }, [onDrop, onFolderDrop]);
+    },
+    [onDrop, onFolderDrop],
+  );
 
   if (!children) {
     // Render as a drop zone

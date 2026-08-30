@@ -1,194 +1,170 @@
-import { useState, useCallback, useRef } from 'react';
-import { SearchResult, FileItem, SearchFilters, IpcSearchRequest } from '@/types';
-import { useSearchHistory } from './useSearchHistory';
-import { useSearchCache } from './useSearchCache';
-import { useDebouncedCallback } from './useDebounce';
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { SearchRow } from '../../electron/ipc/api'
+import { useSearchHistory } from './useSearchHistory'
+import { useDebouncedCallback } from './useDebounce'
 
+const PAGE_SIZE = 60
+
+export interface SearchState {
+  rows: SearchRow[]
+  total: number | null
+  elapsedMs: number
+}
+
+/**
+ * Search, backed by the engine process.
+ *
+ * Three things this replaces:
+ *
+ *  - A double debounce (300ms here plus 300ms in SearchInput) that made real
+ *    keystroke-to-result latency ~600ms.
+ *  - An AbortController that aborted nothing, because `ipcRenderer.invoke`
+ *    takes no signal. Cancellation now happens in the engine, which abandons
+ *    any request older than the newest one on the port.
+ *  - Numeric-offset paging, which double-applied the offset and made page 3
+ *    onward come back empty. Paging is by opaque keyset cursor.
+ */
 export function useFileSearch() {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<SearchResult | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [filters, setFilters] = useState<SearchFilters>({});
-  const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage] = useState(50); // Items per page
-  const { addToHistory } = useSearchHistory();
-  const searchCache = useSearchCache({ maxSize: 50, ttl: 10 * 60 * 1000 }); // 10 minutes
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const [query, setQuery] = useState('')
+  const [state, setState] = useState<SearchState>({ rows: [], total: null, elapsedMs: 0 })
+  const [isLoading, setIsLoading] = useState(false)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const performSearch = useCallback(async (query: string, searchFilters: SearchFilters = {}, page: number = 1) => {
-    if (!query.trim() && Object.keys(searchFilters).length === 0) {
-      setSearchResults(null);
-      return;
-    }
+  const cursorRef = useRef<string | undefined>(undefined)
+  const requestRef = useRef(0)
+  const { addToHistory } = useSearchHistory()
 
-    // Cancel previous search if still running
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
+  const runSearch = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim()
+      requestRef.current += 1
+      const requestId = requestRef.current
 
-    const combinedFilters = { ...filters, ...searchFilters };
-    const offset = (page - 1) * itemsPerPage;
+      if (!trimmed) {
+        cursorRef.current = undefined
+        setState({ rows: [], total: null, elapsedMs: 0 })
+        setIsLoading(false)
+        setError(null)
+        return
+      }
 
-    // Check cache first (include page in cache key)
-    const cacheKey = `${query.trim()}_${JSON.stringify(combinedFilters)}_${page}`;
-    const cachedResult = searchCache.get(cacheKey, {});
-    if (cachedResult) {
-      setSearchResults(cachedResult);
-      setIsLoading(false);
-      setError(null);
-      return;
-    }
+      setIsLoading(true)
+      setError(null)
 
-    setIsLoading(true);
-    setError(null);
+      try {
+        const page = await window.seekr.search(trimmed, { limit: PAGE_SIZE, wantTotal: true })
+        // A newer keystroke landed while this was in flight.
+        if (requestId !== requestRef.current) return
 
-    // Create new abort controller for this search
-    abortControllerRef.current = new AbortController();
+        cursorRef.current = page.cursor
+        setState({ rows: page.rows, total: page.total ?? page.rows.length, elapsedMs: page.elapsedMs })
+        if (page.total !== undefined) addToHistory(trimmed, page.total)
+      } catch (err) {
+        if (requestId !== requestRef.current) return
+        setError(err instanceof Error ? err.message : 'Search failed')
+        setState({ rows: [], total: 0, elapsedMs: 0 })
+      } finally {
+        if (requestId === requestRef.current) setIsLoading(false)
+      }
+    },
+    [addToHistory],
+  )
 
+  const [debouncedSearch] = useDebouncedCallback((text: string) => void runSearch(text), 120)
+
+  const search = useCallback(
+    (text: string) => {
+      setQuery(text)
+      debouncedSearch(text)
+    },
+    [debouncedSearch],
+  )
+
+  /** Appends the next page. Replaces the old first/prev/next pager entirely. */
+  const loadMore = useCallback(async () => {
+    const cursor = cursorRef.current
+    if (!cursor || isLoadingMore) return
+
+    const requestId = requestRef.current
+    setIsLoadingMore(true)
     try {
-      const request: IpcSearchRequest = {
-        query: query.trim(),
-        filters: combinedFilters,
-        limit: itemsPerPage,
-        offset: offset
-      };
+      const page = await window.seekr.search(query.trim(), { limit: PAGE_SIZE, cursor })
+      if (requestId !== requestRef.current) return
 
-      const response = await window.fileSearchAPI.searchFiles(request);
-
-      // Check if this search was aborted
-      if (abortControllerRef.current?.signal.aborted) {
-        return;
-      }
-
-      if (response.success) {
-        setSearchResults(response.data);
-
-        // Cache the result with page info
-        const cacheKey = `${query.trim()}_${JSON.stringify(combinedFilters)}_${page}`;
-        searchCache.set(cacheKey, {}, response.data);
-
-        // Add to search history with result count
-        if (query.trim()) {
-          addToHistory(query.trim(), response.data.totalCount);
-        }
-      } else {
-        setError(response.error || 'Search failed');
-        setSearchResults(null);
-      }
+      cursorRef.current = page.cursor
+      setState((previous) => ({ ...previous, rows: [...previous.rows, ...page.rows] }))
     } catch (err) {
-      if (abortControllerRef.current?.signal.aborted) {
-        return; // Ignore aborted requests
-      }
-      setError(err instanceof Error ? err.message : 'Unknown error occurred');
-      setSearchResults(null);
+      setError(err instanceof Error ? err.message : 'Failed to load more results')
     } finally {
-      if (!abortControllerRef.current?.signal.aborted) {
-        setIsLoading(false);
-      }
+      setIsLoadingMore(false)
     }
-  }, [filters, searchCache, addToHistory, itemsPerPage]);
-
-  // Debounced search to avoid too many API calls - only for new searches
-  const [debouncedSearch] = useDebouncedCallback((query: string, searchFilters: SearchFilters) => {
-    performSearch(query, searchFilters, 1); // Always start from page 1 for new searches
-  }, 300);
-
-  const search = useCallback((query: string) => {
-    setSearchQuery(query);
-    setCurrentPage(1); // Reset to first page on new search
-    if (query.trim()) {
-      debouncedSearch(query, filters);
-    } else {
-      setSearchResults(null);
-    }
-  }, [debouncedSearch, filters]);
-
-  const updateFilters = useCallback((newFilters: SearchFilters) => {
-    setFilters(newFilters);
-    setCurrentPage(1); // Reset to first page when filters change
-    if (searchQuery.trim()) {
-      // Use immediate search for filter changes, not debounced
-      performSearch(searchQuery, newFilters, 1);
-    }
-  }, [searchQuery, performSearch]);
+  }, [query, isLoadingMore])
 
   const clearSearch = useCallback(() => {
-    // Cancel any ongoing search
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    setSearchQuery('');
-    setSearchResults(null);
-    setError(null);
-    setIsLoading(false);
-    setCurrentPage(1);
-  }, []);
+    requestRef.current += 1
+    cursorRef.current = undefined
+    setQuery('')
+    setState({ rows: [], total: null, elapsedMs: 0 })
+    setError(null)
+    setIsLoading(false)
+  }, [])
 
-  const openFile = useCallback(async (file: FileItem) => {
-    try {
-      const response = await window.fileSearchAPI.openFile(file.fullPath);
-      if (!response.success) {
-        setError(response.error || 'Failed to open file');
+  const openFile = useCallback(async (fullPath: string) => {
+    const result = await window.seekr.file.open(fullPath)
+    if (!result.ok) setError(result.error)
+  }, [])
+
+  const revealFile = useCallback(async (fullPath: string) => {
+    const result = await window.seekr.file.reveal(fullPath)
+    if (!result.ok) setError(result.error)
+  }, [])
+
+  const copyPath = useCallback(async (fullPath: string) => {
+    const result = await window.seekr.file.copyPath(fullPath)
+    if (!result.ok) setError(result.error)
+  }, [])
+
+  const trashFile = useCallback(
+    async (fullPath: string) => {
+      const result = await window.seekr.file.trash(fullPath)
+      if (!result.ok) {
+        setError(result.error)
+        return
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to open file');
-    }
-  }, []);
+      // Drop it from the visible list immediately; the watcher will catch up.
+      setState((previous) => ({
+        ...previous,
+        rows: previous.rows.filter((row) => row.fullPath !== fullPath),
+        total: previous.total === null ? null : Math.max(0, previous.total - 1),
+      }))
+    },
+    [],
+  )
 
-  const revealFile = useCallback(async (file: FileItem) => {
-    try {
-      const response = await window.fileSearchAPI.openFileLocation(file.fullPath);
-      if (!response.success) {
-        setError(response.error || 'Failed to reveal file');
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to reveal file');
-    }
-  }, []);
-
-  // Pagination functions
-  const goToPage = useCallback((page: number) => {
-    setCurrentPage(page);
-    performSearch(searchQuery, filters, page);
-  }, [searchQuery, filters, performSearch]);
-
-  const nextPage = useCallback(() => {
-    if (searchResults && currentPage < Math.ceil(searchResults.totalCount / itemsPerPage)) {
-      goToPage(currentPage + 1);
-    }
-  }, [currentPage, searchResults, itemsPerPage, goToPage]);
-
-  const prevPage = useCallback(() => {
-    if (currentPage > 1) {
-      goToPage(currentPage - 1);
-    }
-  }, [currentPage, goToPage]);
-
-  // Calculate pagination info
-  const totalPages = searchResults ? Math.ceil(searchResults.totalCount / itemsPerPage) : 0;
-  const hasNextPage = currentPage < totalPages;
-  const hasPrevPage = currentPage > 1;
+  // Results reflect an index that just changed underneath them.
+  useEffect(() => {
+    return window.seekr.events.onIndexComplete(() => {
+      if (query.trim()) void runSearch(query)
+    })
+  }, [query, runSearch])
 
   return {
-    searchQuery,
-    setSearchQuery,
-    searchResults,
+    query,
+    setQuery,
+    rows: state.rows,
+    total: state.total,
+    elapsedMs: state.elapsedMs,
     isLoading,
+    isLoadingMore,
+    hasMore: cursorRef.current !== undefined,
     error,
-    filters,
-    currentPage,
-    totalPages,
-    itemsPerPage,
-    hasNextPage,
-    hasPrevPage,
     search,
-    updateFilters,
+    loadMore,
     clearSearch,
     openFile,
     revealFile,
-    goToPage,
-    nextPage,
-    prevPage
-  };
+    copyPath,
+    trashFile,
+  }
 }

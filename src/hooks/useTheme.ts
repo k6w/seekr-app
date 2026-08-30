@@ -4,7 +4,7 @@ type Theme = 'light' | 'dark' | 'system';
 
 export function useTheme() {
   const [theme, setTheme] = useState<Theme>(() => {
-    const stored = localStorage.getItem('file-search-theme');
+    const stored = localStorage.getItem('seekr-theme');
     return (stored as Theme) || 'system';
   });
 
@@ -43,7 +43,7 @@ export function useTheme() {
   // Update theme when it changes
   useEffect(() => {
     updateResolvedTheme();
-    localStorage.setItem('file-search-theme', theme);
+    localStorage.setItem('seekr-theme', theme);
   }, [theme, updateResolvedTheme]);
 
   // Initialize theme on mount

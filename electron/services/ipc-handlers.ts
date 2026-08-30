@@ -1,316 +1,158 @@
-import { ipcMain, shell, BrowserWindow } from 'electron';
-import { DatabaseService } from './database';
-import { FileIndexer } from './indexer';
-import { FileWatcher } from './file-watcher';
-import { SearchService } from './search'
-import * as fs from 'fs'
-import { IpcSearchRequest, IpcIndexRequest, IpcResponse } from '../../src/types';
+import {
+  BrowserWindow,
+  app,
+  clipboard,
+  ipcMain,
+  nativeImage,
+  shell,
+  type IpcMainInvokeEvent,
+} from 'electron'
+import path from 'node:path'
+import log from 'electron-log/main'
+import { SettingsStore } from './settings'
+import { getSelectableRoots, getSystemInfo } from './platform'
+import { PathGuard } from '../security/path-guard'
+import { IpcChannel } from '../ipc/channels'
+import type { IpcResult, SystemInfo } from '../ipc/api'
 
+const ok = <T>(data: T): IpcResult<T> => ({ ok: true, data })
+const fail = (error: unknown): IpcResult<never> => ({
+  ok: false,
+  error: error instanceof Error ? error.message : 'Unknown error',
+})
+
+/** macOS deep link to the exact settings pane. There is no API to request FDA. */
+const FULL_DISK_ACCESS_URL =
+  'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles'
+
+/**
+ * Everything main still owns after the engine split: the shell verbs, the
+ * permission prompts, and the root allowlist the path guard reads.
+ *
+ * Search and indexing are deliberately absent -- they travel renderer to
+ * engine over a MessagePort and never pass through here.
+ */
 export class IpcHandlers {
-  private db: DatabaseService;
-  private indexer: FileIndexer;
-  private fileWatcher: FileWatcher;
-  private searchService: SearchService;
+  private readonly pathGuard: PathGuard
 
-  constructor(database: DatabaseService, indexer: FileIndexer, fileWatcher: FileWatcher) {
-    this.db = database;
-    this.indexer = indexer;
-    this.fileWatcher = fileWatcher;
-    this.searchService = new SearchService(database);
-    this.setupHandlers();
+  constructor(
+    private readonly settings: SettingsStore,
+    /** Asks the engine whether a path is present in the index. */
+    isIndexed: (fullPath: string) => Promise<boolean>,
+  ) {
+    this.pathGuard = new PathGuard({
+      getIndexedRoots: () => this.settings.get().indexedPaths,
+      isIndexed,
+    })
+    this.register()
   }
 
-  private setupHandlers(): void {
-    // Search files
-    ipcMain.handle('search-files', async (event, request: IpcSearchRequest): Promise<IpcResponse> => {
-      try {
-        const { query, filters, limit = 100, offset = 0 } = request;
+  /**
+   * Rejects invokes whose sender is not the main frame of one of our own
+   * windows. Without this, any subframe the app ever loads inherits the full
+   * API surface just by being in the same renderer.
+   */
+  private isTrustedSender(event: IpcMainInvokeEvent): boolean {
+    if (BrowserWindow.fromWebContents(event.sender) === null) return false
+    const frame = event.senderFrame
+    return frame === null || frame.parent === null
+  }
 
-        // Use the advanced search service
-        const searchResult = await this.searchService.search(query, filters, limit, offset);
-
-        return {
-          success: true,
-          data: searchResult
-        };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        };
+  private handle<T, Args extends unknown[]>(
+    channel: string,
+    fn: (event: IpcMainInvokeEvent, ...args: Args) => Promise<IpcResult<T>> | IpcResult<T>,
+  ): void {
+    ipcMain.handle(channel, async (event, ...args) => {
+      if (!this.isTrustedSender(event)) {
+        return fail(new Error('Rejected IPC from an untrusted frame'))
       }
-    });
-
-    // Start indexing
-    ipcMain.handle('start-indexing', async (event, request: IpcIndexRequest): Promise<IpcResponse> => {
       try {
-        console.log('Received indexing request:', request);
-
-        if (this.indexer.isCurrentlyIndexing()) {
-          return {
-            success: false,
-            error: 'Indexing already in progress'
-          };
-        }
-
-        // Validate and sanitize paths
-        if (!request.paths || !Array.isArray(request.paths) || request.paths.length === 0) {
-          return {
-            success: false,
-            error: 'No valid paths provided for indexing'
-          };
-        }
-
-        const validPaths = request.paths.filter(p => typeof p === 'string' && p.trim().length > 0);
-        if (validPaths.length === 0) {
-          return {
-            success: false,
-            error: 'No valid paths provided for indexing'
-          };
-        }
-
-        const excludePaths = Array.isArray(request.excludePaths) ? request.excludePaths : [];
-
-        console.log('Starting indexing with paths:', validPaths);
-        console.log('Exclude paths:', excludePaths);
-
-        // Start indexing (don't await - let it run in background)
-        this.indexer.startIndexing(validPaths, excludePaths).catch(error => {
-          console.error('Indexing error:', error);
-          const windows = BrowserWindow.getAllWindows();
-          windows.forEach(window => {
-            window.webContents.send('indexing-error', error.message);
-          });
-        });
-
-        // Start file watching for real-time updates
-        try {
-          await this.fileWatcher.startWatching(validPaths, excludePaths);
-        } catch (watchError) {
-          console.warn('File watching failed to start:', watchError);
-          // Don't fail the entire operation if file watching fails
-        }
-
-        return {
-          success: true,
-          data: { message: 'Indexing started successfully' }
-        };
+        return await fn(event, ...(args as Args))
       } catch (error) {
-        console.error('Start indexing error:', error);
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        };
+        log.error(`IPC handler failed on ${channel}:`, error)
+        return fail(error)
       }
-    });
+    })
+  }
 
-    // Stop indexing
-    ipcMain.handle('stop-indexing', async (): Promise<IpcResponse> => {
-      try {
-        this.indexer.stopIndexing();
-        await this.fileWatcher.stopWatching();
-        return {
-          success: true,
-          data: { message: 'Indexing and file watching stopped' }
-        };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        };
-      }
-    });
+  private register(): void {
+    // Every verb below hands a path to the OS, so every one goes through the
+    // guard first. See electron/security/path-guard.ts for why.
+    this.handle(IpcChannel.FileOpen, async (_e, filePath: unknown) => {
+      const verdict = await this.pathGuard.validate(filePath)
+      if (!verdict.ok) return fail(new Error(verdict.reason))
 
-    // Get indexing progress
-    ipcMain.handle('get-indexing-progress', async (): Promise<IpcResponse> => {
-      try {
-        const progress = this.indexer.getProgress();
-        return {
-          success: true,
-          data: progress
-        };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        };
-      }
-    });
+      // openPath resolves with a non-empty string on failure rather than rejecting.
+      const message = await shell.openPath(verdict.path)
+      return message ? fail(new Error(message)) : ok(undefined)
+    })
 
-    // Get file count
-    ipcMain.handle('get-file-count', async (): Promise<IpcResponse> => {
-      try {
-        const count = await this.db.getFileCount();
-        return {
-          success: true,
-          data: { count }
-        };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        };
-      }
-    });
+    this.handle(IpcChannel.FileReveal, async (_e, filePath: unknown) => {
+      const verdict = await this.pathGuard.validate(filePath)
+      if (!verdict.ok) return fail(new Error(verdict.reason))
+      shell.showItemInFolder(verdict.path)
+      return ok(undefined)
+    })
 
-    // Open file location
-    ipcMain.handle('open-file-location', async (event, filePath: string): Promise<IpcResponse> => {
-      try {
-        await shell.showItemInFolder(filePath);
-        return {
-          success: true,
-          data: { message: 'File location opened' }
-        };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        };
-      }
-    });
+    this.handle(IpcChannel.FileCopyPath, async (_e, filePath: unknown) => {
+      const verdict = await this.pathGuard.validate(filePath)
+      if (!verdict.ok) return fail(new Error(verdict.reason))
+      clipboard.writeText(verdict.path)
+      return ok(undefined)
+    })
 
-    // Open file
-    ipcMain.handle('open-file', async (event, filePath: string): Promise<IpcResponse> => {
-      try {
-        await shell.openPath(filePath);
-        return {
-          success: true,
-          data: { message: 'File opened' }
-        };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        };
-      }
-    });
+    this.handle(IpcChannel.FileTrash, async (_e, filePath: unknown) => {
+      const verdict = await this.pathGuard.validate(filePath)
+      if (!verdict.ok) return fail(new Error(verdict.reason))
+      // Unlike openPath, trashItem rejects on failure.
+      await shell.trashItem(verdict.path)
+      return ok(undefined)
+    })
 
-    // Get system drives (Windows specific for now)
-    ipcMain.handle('get-system-drives', async (): Promise<IpcResponse> => {
-      try {
-        const drives: string[] = [];
+    this.handle(IpcChannel.FileStartDrag, async (event, filePath: unknown) => {
+      const verdict = await this.pathGuard.validate(filePath)
+      if (!verdict.ok) return fail(new Error(verdict.reason))
 
-        if (process.platform === 'win32') {
-          // On Windows, check common drive letters
-          for (let i = 65; i <= 90; i++) { // A-Z
-            const drive = String.fromCharCode(i) + ':\\';
-            try {
-              await fs.promises.access(drive);
-              drives.push(drive);
-            } catch {
-              // Drive doesn't exist or not accessible
-            }
-          }
+      // startDrag needs a real icon; passing an empty one throws.
+      const icon = await app.getFileIcon(verdict.path, { size: 'normal' }).catch(() => null)
+      event.sender.startDrag({ file: verdict.path, icon: icon ?? nativeImage.createEmpty() })
+      return ok(undefined)
+    })
 
-          // If no drives found, add C:\ as fallback
-          if (drives.length === 0) {
-            drives.push('C:\\');
-          }
-        } else {
-          // On Unix-like systems, start with root and common directories
-          const commonPaths = ['/', '/home', '/usr'];
-          for (const path of commonPaths) {
-            try {
-              await fs.promises.access(path);
-              drives.push(path);
-              break; // Just use the first accessible one
-            } catch {
-              // Path not accessible
-            }
-          }
+    this.handle(IpcChannel.SystemRoots, async () => ok(await getSelectableRoots()))
 
-          // Fallback to root if nothing found
-          if (drives.length === 0) {
-            drives.push('/');
-          }
-        }
+    this.handle(IpcChannel.SystemInfo, () => ok<SystemInfo>(getSystemInfo()))
 
-        console.log('System drives found:', drives);
+    this.handle(IpcChannel.SystemOpenFdaSettings, async () => {
+      if (process.platform !== 'darwin') return fail(new Error('macOS only'))
+      await shell.openExternal(FULL_DISK_ACCESS_URL)
+      return ok(undefined)
+    })
 
-        return {
-          success: true,
-          data: { drives }
-        };
-      } catch (error) {
-        console.error('Error getting system drives:', error);
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        };
-      }
-    });
+    /**
+     * Records which roots are being indexed.
+     *
+     * This is the allowlist PathGuard consults, so main persists it before the
+     * engine starts finding files there. Renderer localStorage -- where
+     * settings used to live -- is the wrong owner for a security-relevant list.
+     */
+    this.handle(IpcChannel.IndexRootsChanged, (_e, roots: unknown, excludePaths: unknown) => {
+      const paths = Array.isArray(roots)
+        ? roots.filter((p): p is string => typeof p === 'string' && path.isAbsolute(p))
+        : []
+      if (paths.length === 0) return fail(new Error('No valid absolute roots supplied'))
 
-    // Setup indexing progress events
-    this.indexer.on('progress', (progress) => {
-      // Send progress updates to all renderer processes
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(window => {
-        window.webContents.send('indexing-progress', progress);
-      });
-    });
+      this.settings.update({
+        indexedPaths: paths,
+        excludedPaths: Array.isArray(excludePaths)
+          ? excludePaths.filter((p): p is string => typeof p === 'string')
+          : [],
+      })
+      return ok(undefined)
+    })
+  }
 
-    this.indexer.on('complete', () => {
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(window => {
-        window.webContents.send('indexing-complete');
-      });
-    });
-
-    this.indexer.on('error', (error) => {
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(window => {
-        window.webContents.send('indexing-error', error.message);
-      });
-    });
-
-    // Setup file watcher events
-    this.fileWatcher.on('fileAdded', (file) => {
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(window => {
-        window.webContents.send('file-added', file);
-      });
-    });
-
-    this.fileWatcher.on('fileChanged', (file) => {
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(window => {
-        window.webContents.send('file-changed', file);
-      });
-    });
-
-    this.fileWatcher.on('fileRemoved', (filePath) => {
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(window => {
-        window.webContents.send('file-removed', filePath);
-      });
-    });
-
-    this.fileWatcher.on('directoryAdded', (directory) => {
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(window => {
-        window.webContents.send('directory-added', directory);
-      });
-    });
-
-    this.fileWatcher.on('directoryRemoved', (dirPath) => {
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(window => {
-        window.webContents.send('directory-removed', dirPath);
-      });
-    });
-
-    this.fileWatcher.on('watcherReady', (path) => {
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(window => {
-        window.webContents.send('watcher-ready', path);
-      });
-    });
-
-    this.fileWatcher.on('watchingStopped', () => {
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(window => {
-        window.webContents.send('watching-stopped');
-      });
-    });
+  dispose(): void {
+    for (const channel of Object.values(IpcChannel)) ipcMain.removeHandler(channel)
   }
 }

@@ -1,164 +1,111 @@
-name: Build and Release
- 
-permissions:
-  contents: write
-  packages: write
+name: Release
 
+# Tag-driven only. The previous workflow also ran on every push to the default
+# branch, which — combined with Dependabot auto-merge — was an unattended path
+# from a dependency bump to a published binary.
 on:
   push:
-    branches: [ main, master ]
-    tags: [ 'v*' ]
-  pull_request:
-    branches: [ main, master ]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build:
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
-
-    env:
-      FORCE_COLOR: 0
-      CI: true
-
-    strategy:
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-
+  # The tag is the source of truth for the version. Artifact names interpolate
+  # ${version} from package.json, so a mismatch ships misnamed files — which is
+  # exactly what happened when v1.0.11 released assets named 1.0.0.
+  verify:
+    name: Verify version matches tag
+    runs-on: ubuntu-latest
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-
-    - name: Setup pnpm
-      uses: pnpm/action-setup@v4
-      with:
-        version: 8
-
-    - name: Get pnpm store directory
-      shell: bash
-      run: |
-        echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
-
-    - name: Setup pnpm cache
-      uses: actions/cache@v4
-      with:
-        path: ${{ env.STORE_PATH }}
-        key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-        restore-keys: |
-          ${{ runner.os }}-pnpm-store-
-
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-
-    - name: Install dependencies
-      run: |
-        pnpm install --ignore-scripts || pnpm install --no-frozen-lockfile --ignore-scripts
-      timeout-minutes: 5
-
-    - name: Rebuild native dependencies for Electron
-      run: npx electron-builder install-app-deps
-      timeout-minutes: 5
-
-    - name: Install additional Linux dependencies
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        sudo apt-get update -qq
-        sudo apt-get install -y --no-install-recommends libnss3-dev libgbm1 libxss1 libasound2t64
-      timeout-minutes: 2
-
-    - name: Run linting
-      run: pnpm run lint
-
-    - name: Build application (Windows)
-      if: matrix.os == 'windows-latest'
-      run: pnpm run build:win
-      timeout-minutes: 15
-      env:
-        CI: true
-
-    - name: Build application (macOS)
-      if: matrix.os == 'macos-latest'
-      run: pnpm run build:mac
-      timeout-minutes: 15
-      env:
-        CI: true
-        GH_TOKEN: ${{ secrets.GH_TOKEN }}
-
-    - name: Build application (Linux)
-      if: matrix.os == 'ubuntu-latest'
-      run: pnpm run build:linux
-      timeout-minutes: 15
-      env:
-        CI: true
-
-    - name: List build output
-      shell: bash
-      run: |
-        echo "Contents of release directory:"
-        ls -la release/ 2>/dev/null || echo "No release directory found"
-        echo "Build artifacts found:"
-        find . \( -name "*Setup.exe" -o -name "*Portable.exe" -o -name "*.dmg" -o -name "*.AppImage" \) 2>/dev/null || echo "No build artifacts found"
-
-    - name: Upload artifacts (Windows - Installer)
-      if: matrix.os == 'windows-latest'
-      uses: actions/upload-artifact@v4
-      with:
-        name: seekr-windows-installer
-        path: 'release/**/*Setup.exe'
-        if-no-files-found: error
-
-    - name: Upload artifacts (Windows - Portable)
-      if: matrix.os == 'windows-latest'
-      uses: actions/upload-artifact@v4
-      with:
-        name: seekr-windows-portable
-        path: 'release/**/*Portable.exe'
-        if-no-files-found: error
-
-    - name: Upload artifacts (macOS)
-      if: matrix.os == 'macos-latest'
-      uses: actions/upload-artifact@v4
-      with:
-        name: seekr-macos
-        path: 'release/**/*Installer.dmg'
-        if-no-files-found: error
-
-    - name: Upload artifacts (Linux)
-      if: matrix.os == 'ubuntu-latest'
-      uses: actions/upload-artifact@v4
-      with:
-        name: seekr-linux
-        path: 'release/**/*.AppImage'
-        if-no-files-found: error
+      - uses: actions/checkout@v4
+      - name: Compare package.json to the tag
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(node -p "require('./package.json').version")
+          echo "tag=$TAG package.json=$PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag v$TAG does not match package.json version $PKG"
+            exit 1
+          fi
 
   release:
-    needs: build
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    
+    name: Build ${{ matrix.os }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Download all artifacts
-      uses: actions/download-artifact@v4
-      
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
-      with:
-        files: |
-          seekr-windows-installer/**
-          seekr-windows-portable/**
-          seekr-macos/**
-          seekr-linux/**
-        generate_release_notes: true
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Type-check, lint and test
+        run: |
+          pnpm tsc
+          pnpm lint
+          pnpm lint:strict
+          pnpm test
+
+      - name: Build and publish
+        run: pnpm exec electron-builder --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # Without a certificate, electron-builder searches the keychain and
+          # fails the job. Turn discovery off unless one is actually supplied.
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.MAC_CSC_LINK != '' }}
+
+          # macOS signing and notarization. With none of these set the build
+          # ships unsigned and says so; with only some of them set it fails,
+          # because that is a misconfiguration rather than a choice. Worth
+          # configuring: macOS keys Full Disk Access to the code signature, so
+          # an unsigned build asks for that permission again after every update.
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+          # Windows Authenticode.
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+
+      # The check that matters: does the built binary actually run? An artifact
+      # existing proves nothing about whether its native module loads.
+      - name: Start a virtual display
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          Xvfb :99 -screen 0 1280x1024x24 &
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+
+      - name: Smoke-test the packaged app
+        run: node scripts/smoke-packaged.cjs
+
+      - name: Upload build output on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-output-${{ matrix.os }}
+          path: release/
+          retention-days: 5
