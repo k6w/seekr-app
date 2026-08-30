@@ -65,7 +65,13 @@ jobs:
           pnpm lint:strict
           pnpm test
 
-      - name: Build and publish
+      # electron-builder packages whatever is already in dist/ and
+      # dist-electron/; it does not run Vite itself. Skipping this step
+      # produced an app.asar with no entry file.
+      - name: Build the renderer and the Electron bundles
+        run: pnpm exec vite build
+
+      - name: Package and publish
         run: pnpm exec electron-builder --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
