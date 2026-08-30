@@ -2,15 +2,15 @@
   "name": "seekr",
   "private": false,
   "version": "1.0.0",
-  "description": "A powerful file search application with instant search, fuzzy matching, and advanced filtering",
+  "description": "Instant file search for macOS, Windows and Linux",
   "author": "k6w",
-  "homepage": "https://github.com/k6w/seekr",
+  "homepage": "https://github.com/k6w/seekr-app",
   "repository": {
     "type": "git",
-    "url": "https://github.com/k6w/seekr.git"
+    "url": "https://github.com/k6w/seekr-app.git"
   },
   "bugs": {
-    "url": "https://github.com/k6w/seekr/issues"
+    "url": "https://github.com/k6w/seekr-app/issues"
   },
   "license": "MIT",
   "keywords": [
@@ -23,37 +23,37 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && electron-builder --publish never",
-    "build:win": "tsc && vite build && electron-builder --win --publish never",
-    "build:mac": "tsc && vite build && electron-builder --mac --publish never",
-    "build:linux": "tsc && vite build && electron-builder --linux --publish never",
-    "tsc": "tsc --noEmit --skipLibCheck",
+    "build": "pnpm tsc && vite build && electron-builder --publish never",
+    "build:win": "pnpm tsc && vite build && electron-builder --win --publish never",
+    "build:mac": "pnpm tsc && vite build && electron-builder --mac --publish never",
+    "build:linux": "pnpm tsc && vite build && electron-builder --linux --publish never",
+    "tsc": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.strict.json",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 50",
     "lint:fix": "eslint . --ext ts,tsx --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "preview": "vite preview",
     "clean": "rimraf dist dist-electron release",
-    "test:build": "node scripts/test-build.js",
-    "postinstall": "electron-builder install-app-deps",
-    "prepare:electron": "electron-builder install-app-deps"
+    "lint:strict": "eslint electron tests --ext ts --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.2.3",
     "@tailwindcss/typography": "^0.5.16",
     "autoprefixer": "^10.4.21",
-    "better-sqlite3": "^12.2.0",
+    "better-sqlite3": "^13.0.3",
     "chokidar": "^4.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "fuse.js": "^7.1.0",
     "lucide-react": "^0.536.0",
     "postcss": "^8.5.6",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "tailwind-merge": "^3.3.1",
-    "uuid": "^11.1.0"
+    "uuid": "^11.1.0",
+    "electron-log": "^5.4.4"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.11",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.1.0",
     "@types/react": "^18.2.64",
     "@types/react-dom": "^18.2.21",
@@ -61,8 +61,8 @@
     "@typescript-eslint/eslint-plugin": "^7.1.1",
     "@typescript-eslint/parser": "^7.1.1",
     "@vitejs/plugin-react": "^4.2.1",
-    "electron": "^30.0.1",
-    "electron-builder": "^24.13.3",
+    "electron": "^43.4.1",
+    "electron-builder": "^26.15.3",
     "eslint": "^8.57.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.5",
@@ -71,7 +71,9 @@
     "typescript": "^5.2.2",
     "vite": "^5.1.6",
     "vite-plugin-electron": "^0.28.6",
-    "vite-plugin-electron-renderer": "^0.14.5"
+    "vite-plugin-electron-renderer": "^0.14.5",
+    "vitest": "^3.2.7",
+    "@electron/notarize": "^3.0.1"
   },
   "main": "dist-electron/main.js"
 }

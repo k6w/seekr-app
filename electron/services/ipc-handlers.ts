@@ -1,316 +1,181 @@
-import { ipcMain, shell, BrowserWindow } from 'electron';
-import { DatabaseService } from './database';
-import { FileIndexer } from './indexer';
-import { FileWatcher } from './file-watcher';
+import { BrowserWindow, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
+import { DatabaseService } from './database'
+import { FileIndexer } from './indexer'
+import { FileWatcher } from './file-watcher'
 import { SearchService } from './search'
-import * as fs from 'fs'
-import { IpcSearchRequest, IpcIndexRequest, IpcResponse } from '../../src/types';
+import { SettingsStore } from './settings'
+import { getSelectableRoots, getSystemInfo } from './platform'
+import { PathGuard } from '../security/path-guard'
+import { IpcChannel, IpcEvent } from '../ipc/channels'
+import type { IpcResult } from '../ipc/api'
+import type { IpcIndexRequest, IpcSearchRequest } from '../../src/types'
+
+const ok = <T>(data: T): IpcResult<T> => ({ ok: true, data })
+const fail = (error: unknown): IpcResult<never> => ({
+  ok: false,
+  error: error instanceof Error ? error.message : 'Unknown error',
+})
 
 export class IpcHandlers {
-  private db: DatabaseService;
-  private indexer: FileIndexer;
-  private fileWatcher: FileWatcher;
-  private searchService: SearchService;
+  private readonly searchService: SearchService
+  private readonly pathGuard: PathGuard
+  private readonly disposers: Array<() => void> = []
 
-  constructor(database: DatabaseService, indexer: FileIndexer, fileWatcher: FileWatcher) {
-    this.db = database;
-    this.indexer = indexer;
-    this.fileWatcher = fileWatcher;
-    this.searchService = new SearchService(database);
-    this.setupHandlers();
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly indexer: FileIndexer,
+    private readonly fileWatcher: FileWatcher,
+    private readonly settings: SettingsStore,
+  ) {
+    this.searchService = new SearchService(db)
+    this.pathGuard = new PathGuard({
+      getIndexedRoots: () => this.settings.get().indexedPaths,
+      isIndexed: (p) => this.db.hasPath(p),
+    })
+    this.registerHandlers()
+    this.forwardEvents()
   }
 
-  private setupHandlers(): void {
-    // Search files
-    ipcMain.handle('search-files', async (event, request: IpcSearchRequest): Promise<IpcResponse> => {
-      try {
-        const { query, filters, limit = 100, offset = 0 } = request;
+  /**
+   * Rejects invokes whose sender is not the main frame of one of our own
+   * windows. Without this, any subframe the app ever loads inherits the full
+   * API surface just by being in the same renderer.
+   */
+  private isTrustedSender(event: IpcMainInvokeEvent): boolean {
+    if (BrowserWindow.fromWebContents(event.sender) === null) return false
+    const frame = event.senderFrame
+    // `senderFrame` is null if the frame was destroyed mid-call.
+    return frame === null || frame.parent === null
+  }
 
-        // Use the advanced search service
-        const searchResult = await this.searchService.search(query, filters, limit, offset);
-
-        return {
-          success: true,
-          data: searchResult
-        };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        };
+  private handle<T, Args extends unknown[]>(
+    channel: string,
+    fn: (event: IpcMainInvokeEvent, ...args: Args) => Promise<IpcResult<T>> | IpcResult<T>,
+  ): void {
+    ipcMain.handle(channel, async (event, ...args) => {
+      if (!this.isTrustedSender(event)) {
+        return fail(new Error('Rejected IPC from an untrusted frame'))
       }
-    });
-
-    // Start indexing
-    ipcMain.handle('start-indexing', async (event, request: IpcIndexRequest): Promise<IpcResponse> => {
       try {
-        console.log('Received indexing request:', request);
-
-        if (this.indexer.isCurrentlyIndexing()) {
-          return {
-            success: false,
-            error: 'Indexing already in progress'
-          };
-        }
-
-        // Validate and sanitize paths
-        if (!request.paths || !Array.isArray(request.paths) || request.paths.length === 0) {
-          return {
-            success: false,
-            error: 'No valid paths provided for indexing'
-          };
-        }
-
-        const validPaths = request.paths.filter(p => typeof p === 'string' && p.trim().length > 0);
-        if (validPaths.length === 0) {
-          return {
-            success: false,
-            error: 'No valid paths provided for indexing'
-          };
-        }
-
-        const excludePaths = Array.isArray(request.excludePaths) ? request.excludePaths : [];
-
-        console.log('Starting indexing with paths:', validPaths);
-        console.log('Exclude paths:', excludePaths);
-
-        // Start indexing (don't await - let it run in background)
-        this.indexer.startIndexing(validPaths, excludePaths).catch(error => {
-          console.error('Indexing error:', error);
-          const windows = BrowserWindow.getAllWindows();
-          windows.forEach(window => {
-            window.webContents.send('indexing-error', error.message);
-          });
-        });
-
-        // Start file watching for real-time updates
-        try {
-          await this.fileWatcher.startWatching(validPaths, excludePaths);
-        } catch (watchError) {
-          console.warn('File watching failed to start:', watchError);
-          // Don't fail the entire operation if file watching fails
-        }
-
-        return {
-          success: true,
-          data: { message: 'Indexing started successfully' }
-        };
+        return await fn(event, ...(args as Args))
       } catch (error) {
-        console.error('Start indexing error:', error);
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        };
+        console.error(`IPC handler failed on ${channel}:`, error)
+        return fail(error)
       }
-    });
+    })
+  }
 
-    // Stop indexing
-    ipcMain.handle('stop-indexing', async (): Promise<IpcResponse> => {
+  private registerHandlers(): void {
+    this.handle(IpcChannel.Search, async (_e, request: IpcSearchRequest) => {
+      const { query, filters, limit = 100, offset = 0 } = request ?? {}
+      return ok(await this.searchService.search(query ?? '', filters ?? {}, limit, offset))
+    })
+
+    this.handle(IpcChannel.IndexStart, async (_e, request: IpcIndexRequest) => {
+      if (this.indexer.isCurrentlyIndexing()) {
+        return fail(new Error('Indexing already in progress'))
+      }
+
+      const paths = (request?.paths ?? []).filter(
+        (p): p is string => typeof p === 'string' && p.trim().length > 0,
+      )
+      if (paths.length === 0) return fail(new Error('No valid paths provided for indexing'))
+
+      const excludePaths = Array.isArray(request?.excludePaths) ? request.excludePaths : []
+
+      // Persist BEFORE indexing starts. These roots are the allowlist PathGuard
+      // consults, so they must be durable even if indexing is interrupted.
+      this.settings.update({ indexedPaths: paths, excludedPaths: excludePaths })
+
+      this.indexer.startIndexing(paths, excludePaths).catch((error) => {
+        console.error('Indexing error:', error)
+        this.broadcast(IpcEvent.IndexError, error instanceof Error ? error.message : String(error))
+      })
+
       try {
-        this.indexer.stopIndexing();
-        await this.fileWatcher.stopWatching();
-        return {
-          success: true,
-          data: { message: 'Indexing and file watching stopped' }
-        };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        };
+        await this.fileWatcher.startWatching(paths, excludePaths)
+      } catch (watchError) {
+        // A failed watcher degrades freshness but must not fail the index run.
+        console.warn('File watching failed to start:', watchError)
       }
-    });
 
-    // Get indexing progress
-    ipcMain.handle('get-indexing-progress', async (): Promise<IpcResponse> => {
-      try {
-        const progress = this.indexer.getProgress();
-        return {
-          success: true,
-          data: progress
-        };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        };
-      }
-    });
+      return ok(undefined)
+    })
 
-    // Get file count
-    ipcMain.handle('get-file-count', async (): Promise<IpcResponse> => {
-      try {
-        const count = await this.db.getFileCount();
-        return {
-          success: true,
-          data: { count }
-        };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        };
-      }
-    });
+    this.handle(IpcChannel.IndexStop, async () => {
+      this.indexer.stopIndexing()
+      await this.fileWatcher.stopWatching()
+      return ok(undefined)
+    })
 
-    // Open file location
-    ipcMain.handle('open-file-location', async (event, filePath: string): Promise<IpcResponse> => {
-      try {
-        await shell.showItemInFolder(filePath);
-        return {
-          success: true,
-          data: { message: 'File location opened' }
-        };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        };
-      }
-    });
+    this.handle(IpcChannel.IndexProgress, () => ok(this.indexer.getProgress()))
 
-    // Open file
-    ipcMain.handle('open-file', async (event, filePath: string): Promise<IpcResponse> => {
-      try {
-        await shell.openPath(filePath);
-        return {
-          success: true,
-          data: { message: 'File opened' }
-        };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        };
-      }
-    });
+    this.handle(IpcChannel.IndexCount, async () => ok(await this.db.getFileCount()))
 
-    // Get system drives (Windows specific for now)
-    ipcMain.handle('get-system-drives', async (): Promise<IpcResponse> => {
-      try {
-        const drives: string[] = [];
+    // Both file actions hand a path to the OS shell, so both go through the
+    // guard. See electron/security/path-guard.ts for why.
+    this.handle(IpcChannel.FileOpen, async (_e, filePath: unknown) => {
+      const verdict = await this.pathGuard.validate(filePath)
+      if (!verdict.ok) return fail(new Error(verdict.reason))
 
-        if (process.platform === 'win32') {
-          // On Windows, check common drive letters
-          for (let i = 65; i <= 90; i++) { // A-Z
-            const drive = String.fromCharCode(i) + ':\\';
-            try {
-              await fs.promises.access(drive);
-              drives.push(drive);
-            } catch {
-              // Drive doesn't exist or not accessible
-            }
-          }
+      const message = await shell.openPath(verdict.path)
+      // openPath resolves with a non-empty string on failure rather than rejecting.
+      return message ? fail(new Error(message)) : ok(undefined)
+    })
 
-          // If no drives found, add C:\ as fallback
-          if (drives.length === 0) {
-            drives.push('C:\\');
-          }
-        } else {
-          // On Unix-like systems, start with root and common directories
-          const commonPaths = ['/', '/home', '/usr'];
-          for (const path of commonPaths) {
-            try {
-              await fs.promises.access(path);
-              drives.push(path);
-              break; // Just use the first accessible one
-            } catch {
-              // Path not accessible
-            }
-          }
+    this.handle(IpcChannel.FileReveal, async (_e, filePath: unknown) => {
+      const verdict = await this.pathGuard.validate(filePath)
+      if (!verdict.ok) return fail(new Error(verdict.reason))
 
-          // Fallback to root if nothing found
-          if (drives.length === 0) {
-            drives.push('/');
-          }
-        }
+      shell.showItemInFolder(verdict.path)
+      return ok(undefined)
+    })
 
-        console.log('System drives found:', drives);
+    this.handle(IpcChannel.SystemDrives, async () => ok(await getSelectableRoots()))
 
-        return {
-          success: true,
-          data: { drives }
-        };
-      } catch (error) {
-        console.error('Error getting system drives:', error);
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        };
-      }
-    });
+    this.handle(IpcChannel.SystemInfo, () => ok(getSystemInfo()))
+  }
 
-    // Setup indexing progress events
-    this.indexer.on('progress', (progress) => {
-      // Send progress updates to all renderer processes
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(window => {
-        window.webContents.send('indexing-progress', progress);
-      });
-    });
+  private broadcast(channel: string, ...args: unknown[]): void {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (window.isDestroyed() || window.webContents.isDestroyed()) continue
+      window.webContents.send(channel, ...args)
+    }
+  }
 
-    this.indexer.on('complete', () => {
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(window => {
-        window.webContents.send('indexing-complete');
-      });
-    });
+  /** Bridges indexer/watcher EventEmitter output onto renderer channels. */
+  private forwardEvents(): void {
+    const relay = (
+      source: FileIndexer | FileWatcher,
+      sourceEvent: string,
+      channel: string,
+      map: (...args: never[]) => unknown[] = (...args: unknown[]) => args,
+    ) => {
+      const listener = (...args: unknown[]) => this.broadcast(channel, ...map(...(args as never[])))
+      source.on(sourceEvent, listener)
+      this.disposers.push(() => source.off(sourceEvent, listener))
+    }
 
-    this.indexer.on('error', (error) => {
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(window => {
-        window.webContents.send('indexing-error', error.message);
-      });
-    });
+    relay(this.indexer, 'progress', IpcEvent.IndexProgress)
+    relay(this.indexer, 'complete', IpcEvent.IndexComplete)
+    relay(this.indexer, 'error', IpcEvent.IndexError, (error: Error) => [error?.message ?? String(error)])
 
-    // Setup file watcher events
-    this.fileWatcher.on('fileAdded', (file) => {
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(window => {
-        window.webContents.send('file-added', file);
-      });
-    });
+    relay(this.fileWatcher, 'fileAdded', IpcEvent.FileAdded)
+    relay(this.fileWatcher, 'fileChanged', IpcEvent.FileChanged)
+    relay(this.fileWatcher, 'fileRemoved', IpcEvent.FileRemoved)
+    // Directories are files with isDirectory set; the renderer does not need
+    // separate channels for them.
+    relay(this.fileWatcher, 'directoryAdded', IpcEvent.FileAdded)
+    relay(this.fileWatcher, 'directoryRemoved', IpcEvent.FileRemoved)
+    relay(this.fileWatcher, 'watcherReady', IpcEvent.WatcherReady)
+    relay(this.fileWatcher, 'watchingStopped', IpcEvent.WatcherStopped)
+  }
 
-    this.fileWatcher.on('fileChanged', (file) => {
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(window => {
-        window.webContents.send('file-changed', file);
-      });
-    });
-
-    this.fileWatcher.on('fileRemoved', (filePath) => {
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(window => {
-        window.webContents.send('file-removed', filePath);
-      });
-    });
-
-    this.fileWatcher.on('directoryAdded', (directory) => {
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(window => {
-        window.webContents.send('directory-added', directory);
-      });
-    });
-
-    this.fileWatcher.on('directoryRemoved', (dirPath) => {
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(window => {
-        window.webContents.send('directory-removed', dirPath);
-      });
-    });
-
-    this.fileWatcher.on('watcherReady', (path) => {
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(window => {
-        window.webContents.send('watcher-ready', path);
-      });
-    });
-
-    this.fileWatcher.on('watchingStopped', () => {
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(window => {
-        window.webContents.send('watching-stopped');
-      });
-    });
+  /** Removes every handler and listener. Called on app shutdown. */
+  dispose(): void {
+    for (const channel of Object.values(IpcChannel)) {
+      ipcMain.removeHandler(channel)
+    }
+    for (const off of this.disposers.splice(0)) off()
   }
 }

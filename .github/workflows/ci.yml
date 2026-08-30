@@ -2,37 +2,109 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [master, main]
   pull_request:
-    branches: [ main ]
+    branches: [master, main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
+  # Fast feedback: types, lint and unit tests on one runner.
+  check:
+    name: Types, lint, tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    strategy:
-      matrix:
-        node-version: [20.x, 22.x]
-
     steps:
-    - uses: actions/checkout@v4
-    - name: Use Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ matrix.node-version }}
-        cache: 'npm'
-    
-    - name: Install dependencies
-      run: npm ci
-    
-    - name: Run linting
-      run: npm run lint
+      - uses: actions/checkout@v4
 
-    - name: Type check
-      run: npm run tsc
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
 
-    - name: Build
-      run: npm run build
-      env:
-        CI: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # --ignore-scripts skips the electron download and the native rebuild,
+      # neither of which type-checking or unit tests need.
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Type-check
+        run: pnpm tsc
+
+      - name: Lint (repo, budgeted)
+        run: pnpm lint
+
+      - name: Lint (rewritten code, zero warnings)
+        run: pnpm lint:strict
+
+      - name: Unit tests
+        run: pnpm test
+
+  # The check that actually matters: does the PACKAGED app run?
+  # CI previously only asserted that an artifact file existed, which cannot
+  # catch a native module that fails to load out of the asar archive.
+  smoke:
+    name: Packaged smoke (${{ matrix.os }})
+    needs: check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # better-sqlite3 13 ships N-API prebuilds, which are ABI-stable across
+      # Node and Electron, so there is no rebuild step. Assert the prebuild for
+      # this runner actually shipped -- without it the app cannot open its
+      # database, and the smoke test below would fail with a less obvious error.
+      - name: Verify the native prebuild is present
+        shell: bash
+        run: |
+          if ! ls node_modules/better-sqlite3/prebuilds/*.node >/dev/null 2>&1; then
+            echo "better-sqlite3 prebuilds are missing"
+            exit 1
+          fi
+          ls -la node_modules/better-sqlite3/prebuilds/
+
+      - name: Build (unsigned)
+        shell: bash
+        env:
+          # Signing and notarization belong to the release workflow; CI only
+          # needs to prove the app runs.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          SEEKR_SKIP_NOTARIZE: '1'
+        run: pnpm build
+
+      - name: Start a virtual display
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          Xvfb :99 -screen 0 1280x1024x24 &
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+
+      - name: Launch the packaged app and assert it starts
+        run: node scripts/smoke-packaged.cjs
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output-${{ matrix.os }}
+          path: release/
+          retention-days: 3

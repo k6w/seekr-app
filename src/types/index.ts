@@ -9,6 +9,12 @@ export interface FileItem {
   dateCreated: Date;
   isDirectory: boolean;
   type: FileType;
+  /**
+   * Sits under a build-artifact or VCS directory (node_modules, .git, dist).
+   * Indexed and searchable, but rank-penalized so it does not crowd out real
+   * results. See electron/services/path-policy.ts.
+   */
+  demoted?: boolean;
 }
 
 export enum FileType {
@@ -52,15 +58,6 @@ export interface IndexingProgress {
   progress: number; // 0-100
 }
 
-export interface AppSettings {
-  indexedPaths: string[];
-  excludedPaths: string[];
-  theme: 'light' | 'dark' | 'system';
-  searchResultsLimit: number;
-  enableFuzzySearch: boolean;
-  enableContentSearch: boolean;
-}
-
 // IPC Types for Electron communication
 export interface IpcSearchRequest {
   query: string;
@@ -74,8 +71,3 @@ export interface IpcIndexRequest {
   excludePaths?: string[];
 }
 
-export interface IpcResponse<T = any> {
-  success: boolean;
-  data?: T;
-  error?: string;
-}

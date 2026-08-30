@@ -4,7 +4,7 @@ A lightning-fast, modern file search application built with Electron, React, and
 
 ## ✨ Features
 
-- **⚡ Lightning Fast Search**: Instant search results with SQLite FTS5 full-text search
+- **⚡ Fast Search**: Indexed filename search backed by SQLite
 - **🔍 Fuzzy Matching**: Find files even with typos using advanced fuzzy search algorithms
 - **🎨 Modern UI**: Beautiful glassmorphism design with dark/light theme support
 - **📁 Smart Filtering**: Filter by file type, size, date modified, and more
@@ -16,16 +16,15 @@ A lightning-fast, modern file search application built with Electron, React, and
 
 ## 🚀 Quick Start
 
-### This method is currently unavailable
-```### Download
+### Download
 
 Download the latest release for your platform:
 
 - **Windows**:
-  - [Installer (Setup.exe)](https://github.com/k6w/seekr/releases/latest) - Full installation with shortcuts
-  - [Portable (Portable.exe)](https://github.com/k6w/seekr/releases/latest) - No installation required
-- **macOS**: [Seekr-Mac-1.0.0-Installer.dmg](https://github.com/k6w/seekr/releases/latest)
-- **Linux**: [Seekr-Linux-1.0.0.AppImage](https://github.com/k6w/seekr/releases/latest)
+  - [Installer (Setup.exe)](https://github.com/k6w/seekr-app/releases/latest) - Full installation with shortcuts
+  - [Portable (Portable.exe)](https://github.com/k6w/seekr-app/releases/latest) - No installation required
+- **macOS**: [Seekr-Mac-1.0.0-Installer.dmg](https://github.com/k6w/seekr-app/releases/latest)
+- **Linux**: [Seekr-Linux-1.0.0.AppImage](https://github.com/k6w/seekr-app/releases/latest)
 
 ### Installation
 
@@ -36,7 +35,6 @@ Download the latest release for your platform:
 **macOS:** Download the .dmg file, open it, and drag Seekr to your Applications folder.
 
 **Linux:** Download the .AppImage file, make it executable (`chmod +x Seekr-Linux-*.AppImage`), and run it.
-```
 
 ## 🛠️ Development
 
@@ -53,10 +51,10 @@ git clone https://github.com/k6w/seekr-app.git
 cd seekr-app
 
 # Install dependencies
-npm install
+pnpm install
 
 # Start development server
-npm run dev
+pnpm dev
 
 # Build for production
 npm run build
@@ -121,9 +119,9 @@ seekr/
 ## 🎨 Tech Stack
 
 - **Frontend**: React 18, TypeScript, Tailwind CSS, shadcn/ui
-- **Backend**: Electron, Node.js, better-sqlite3 with FTS5
+- **Backend**: Electron, Node.js, better-sqlite3
 - **Build**: Vite, electron-builder
-- **Search**: Fuse.js for fuzzy matching, SQLite FTS5 for full-text search
+- **Search**: SQLite-backed filename and path matching
 - **File Watching**: Chokidar for real-time file system monitoring
 
 ## 🤝 Contributing
@@ -135,7 +133,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/amazing-feature`
 3. Make your changes
-4. Run tests: `npm test`
+4. Run tests: `pnpm test`
 5. Commit your changes: `git commit -m 'Add amazing feature'`
 6. Push to the branch: `git push origin feature/amazing-feature`
 7. Open a Pull Request
@@ -149,13 +147,13 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Built with [Electron](https://electronjs.org/)
 - UI components from [shadcn/ui](https://ui.shadcn.com/)
 - Icons from [Lucide](https://lucide.dev/)
-- Search powered by [Fuse.js](https://fusejs.io/) and SQLite FTS5
+- Search powered by [SQLite](https://sqlite.org/)
 
 ## 📞 Support
 
-- 🐛 [Report a Bug](https://github.com/k6w/seekr/issues/new?template=bug_report.md)
-- 💡 [Request a Feature](https://github.com/k6w/seekr/issues/new?template=feature_request.md)
-- 💬 [Discussions](https://github.com/k6w/seekr/discussions)
+- 🐛 [Report a Bug](https://github.com/k6w/seekr-app/issues/new?template=bug_report.md)
+- 💡 [Request a Feature](https://github.com/k6w/seekr-app/issues/new?template=feature_request.md)
+- 💬 [Discussions](https://github.com/k6w/seekr-app/discussions)
 
 ---
 

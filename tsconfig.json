@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
+    "target": "ES2022",
     "useDefineForClassFields": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "skipLibCheck": true,
 
@@ -20,12 +20,22 @@
       "@/*": ["./src/*"]
     },
 
-    /* Linting */
+    /*
+     * Renderer strictness is still off because the legacy components in
+     * src/components predate this work and are scheduled for replacement in
+     * the UI phase. The main process, the IPC layer and the tests are held to
+     * full strict mode by tsconfig.strict.json, which CI also runs.
+     * Do not add new loose code here: put new modules under electron/ or move
+     * them into the strict project as they are rewritten.
+     */
     "strict": false,
+    // Required on its own: discriminated-union narrowing (IpcResult) does not
+    // work without it, so every `if (!response.ok) response.error` fails.
+    "strictNullChecks": true,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "electron"],
+  "include": ["src", "electron", "tests"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

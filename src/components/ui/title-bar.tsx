@@ -1,102 +1,82 @@
-import React, { useState, useEffect } from 'react';
-import { Minus, Square, X, Search } from 'lucide-react';
-import { Button } from './button';
-import { cn } from '@/lib/utils';
+import { useEffect, useState } from 'react'
+import { Minus, Square, X, Copy } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { usePlatform } from '@/hooks/usePlatform'
 
-interface TitleBarProps {
-  title?: string;
-  className?: string;
-}
-
-export function TitleBar({ title = "File Search", className }: TitleBarProps) {
-  const [isMaximized, setIsMaximized] = useState(false);
+/**
+ * Custom window chrome for Windows and Linux.
+ *
+ * On macOS this renders only the drag region and a title: the real traffic
+ * lights are drawn by the system via `titleBarStyle: 'hiddenInset'`. The old
+ * version drew Windows-style min/max/close on the RIGHT on every platform,
+ * including the macOS build.
+ */
+export function TitleBar({ title = 'Seekr' }: { title?: string }) {
+  const platform = usePlatform()
+  const [isMaximized, setIsMaximized] = useState(false)
 
   useEffect(() => {
-    const checkMaximized = async () => {
-      if (window.windowAPI) {
-        const maximized = await window.windowAPI.isMaximized();
-        setIsMaximized(maximized);
-      }
-    };
+    let cancelled = false
+    void window.seekr.window.isMaximized().then((value) => {
+      if (!cancelled) setIsMaximized(value)
+    })
 
-    checkMaximized();
-    
-    // Listen for window state changes
-    const interval = setInterval(checkMaximized, 1000);
-    return () => clearInterval(interval);
-  }, []);
+    // Event-driven. The old code polled `isMaximized()` over IPC every 1000ms,
+    // forever, re-rendering the title bar each time.
+    const unsubscribe = window.seekr.window.onMaximizedChanged(setIsMaximized)
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
 
-  const handleMinimize = async () => {
-    await window.windowAPI?.minimize();
-  };
-
-  const handleMaximize = async () => {
-    await window.windowAPI?.maximize();
-    const maximized = await window.windowAPI?.isMaximized();
-    setIsMaximized(maximized);
-  };
-
-  const handleClose = async () => {
-    await window.windowAPI?.close();
-  };
+  const isMac = platform?.isMac ?? false
 
   return (
-    <div 
+    <div
       className={cn(
-        "flex items-center justify-between h-8 bg-background/80 backdrop-blur-md",
-        "border-b border-border/50 select-none",
-        "drag-region", // Custom CSS class for draggable area
-        className
+        'flex h-9 shrink-0 select-none items-center border-b border-border/50',
+        isMac ? 'justify-center' : 'justify-between',
       )}
-      style={{ WebkitAppRegion: 'drag' } as any}
+      style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
     >
-      {/* Left side - App info */}
-      <div className="flex items-center gap-2 px-3">
-        <Search className="h-4 w-4 text-primary" />
-        <span className="text-sm font-medium text-foreground/80">{title}</span>
+      {/* Reserves space for the system traffic lights. */}
+      {isMac && <div className="absolute left-0 h-9 w-20" />}
+
+      <div className={cn('text-xs font-medium text-muted-foreground', !isMac && 'px-3')}>
+        {title}
       </div>
 
-      {/* Right side - Window controls */}
-      <div 
-        className="flex items-center"
-        style={{ WebkitAppRegion: 'no-drag' } as any}
-      >
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleMinimize}
-          className={cn(
-            "h-8 w-8 p-0 rounded-none hover:bg-muted/50",
-            "transition-colors duration-150"
-          )}
-        >
-          <Minus className="h-3 w-3" />
-        </Button>
-        
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleMaximize}
-          className={cn(
-            "h-8 w-8 p-0 rounded-none hover:bg-muted/50",
-            "transition-colors duration-150"
-          )}
-        >
-          <Square className={cn("h-3 w-3", isMaximized && "scale-90")} />
-        </Button>
-        
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleClose}
-          className={cn(
-            "h-8 w-8 p-0 rounded-none hover:bg-destructive hover:text-destructive-foreground",
-            "transition-colors duration-150"
-          )}
-        >
-          <X className="h-3 w-3" />
-        </Button>
-      </div>
+      {!isMac && (
+        <div className="flex" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          <button
+            type="button"
+            aria-label="Minimize"
+            onClick={() => void window.seekr.window.minimize()}
+            className="flex h-9 w-12 items-center justify-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+          >
+            <Minus className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            aria-label={isMaximized ? 'Restore' : 'Maximize'}
+            onClick={() => void window.seekr.window.toggleMaximize()}
+            className="flex h-9 w-12 items-center justify-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+          >
+            {isMaximized ? <Copy className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
+          </button>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={() => void window.seekr.window.hide()}
+            className="flex h-9 w-12 items-center justify-center text-muted-foreground transition-colors hover:bg-destructive hover:text-destructive-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
     </div>
-  );
+  )
 }
+
+export default TitleBar

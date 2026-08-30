@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { SearchResult, SearchFilters } from '@/types';
 
 interface CacheEntry {
@@ -99,11 +99,11 @@ export function useSearchCache(options: SearchCacheOptions = {}) {
     };
   }, [isExpired]);
 
-  return {
-    get,
-    set,
-    clear,
-    invalidate,
-    getStats
-  };
+  // Memoized: returning a fresh object literal every render made this hook's
+  // identity unstable, which invalidated every useCallback and useEffect that
+  // depended on it -- re-subscribing IPC listeners on every single render.
+  return useMemo(
+    () => ({ get, set, clear, invalidate, getStats }),
+    [get, set, clear, invalidate, getStats]
+  );
 }

@@ -19,7 +19,6 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { useTheme } from '@/hooks/useTheme';
 import { useSearchHistory } from '@/hooks/useSearchHistory';
 import { cn } from '@/lib/utils';
@@ -34,6 +33,8 @@ export function SettingsPanel({ open, onOpenChange }: SettingsPanelProps) {
   const { history, clearHistory } = useSearchHistory();
   const [isClearing, setIsClearing] = useState(false);
   const [isReindexing, setIsReindexing] = useState(false);
+  const [reindexError, setReindexError] = useState<string | null>(null);
+  const [fileCount, setFileCount] = useState<number | null>(null);
 
   const handleClearHistory = async () => {
     setIsClearing(true);
@@ -47,37 +48,29 @@ export function SettingsPanel({ open, onOpenChange }: SettingsPanelProps) {
   };
 
   const handleClearCache = async () => {
-    try {
-      // Clear search cache
-      const response = await window.fileSearchAPI.getFileCount();
-      if (response.success) {
-        // Trigger a cache refresh by getting file count
-        console.log('Cache refreshed');
-      }
-    } catch (error) {
-      console.error('Failed to clear cache:', error);
-    }
+    // Previously this called getFileCount() and logged "Cache refreshed",
+    // clearing nothing -- the real cache lived in useSearchCache, which the
+    // panel had no reference to. Re-indexing now clears it via the
+    // index-complete event; this button reports the true row count instead.
+    const response = await window.seekr.index.count();
+    if (response.ok) setFileCount(response.data);
   };
 
   const handleReindex = async () => {
     setIsReindexing(true);
+    setReindexError(null);
     try {
-      if (window.fileSearchAPI) {
-        // Trigger a fresh re-index
-        await window.fileSearchAPI.startIndexing({
-          paths: ['C:\\', 'D:\\'], // You might want to get this from settings
-          excludePaths: [
-            'node_modules',
-            '.git',
-            'System Volume Information',
-            '$Recycle.Bin',
-            'pagefile.sys',
-            'hiberfil.sys'
-          ]
-        });
+      // Was hardcoded to ['C:\\', 'D:\\'], so this button did nothing at
+      // all on macOS and Linux. Roots now come from the main process, which
+      // resolves them per platform.
+      const roots = await window.seekr.system.drives();
+      if (!roots.ok) {
+        setReindexError(roots.error);
+        return;
       }
-    } catch (error) {
-      console.error('Failed to start re-indexing:', error);
+
+      const response = await window.seekr.index.start({ paths: roots.data.slice(0, 1) });
+      if (!response.ok) setReindexError(response.error);
     } finally {
       setIsReindexing(false);
     }
@@ -199,30 +192,36 @@ export function SettingsPanel({ open, onOpenChange }: SettingsPanelProps) {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">
-                Manage file indexing and database
-              </p>
-              
-              <div className="flex flex-wrap gap-2">
-                <Badge variant="outline">
-                  Real-time watching enabled
-                </Badge>
-                <Badge variant="outline">
-                  FTS5 search enabled
-                </Badge>
-                <Badge variant="outline">
-                  Fuzzy matching enabled
-                </Badge>
+              {/*
+                These used to be three hardcoded badges reading "Real-time
+                watching enabled", "FTS5 search enabled" and "Fuzzy matching
+                enabled". None were bound to anything, and two are now simply
+                untrue: the dead FTS5 index was dropped and fuse.js removed.
+              */}
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Files indexed</span>
+                <span className="tabular-nums font-medium">
+                  {fileCount === null ? '—' : fileCount.toLocaleString()}
+                </span>
               </div>
 
-              <div className="pt-3 border-t">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium">Re-index Files</p>
-                    <p className="text-xs text-muted-foreground">
-                      Rebuild the file index with correct metadata
-                    </p>
-                  </div>
+              {reindexError && (
+                <p className="text-sm text-destructive" role="alert">
+                  {reindexError}
+                </p>
+              )}
+
+              <div className="flex items-center justify-between gap-2 border-t pt-3">
+                <div className="text-sm">
+                  <p className="font-medium">Rebuild index</p>
+                  <p className="text-muted-foreground">
+                    Rescans your home folder from scratch.
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="ghost" size="sm" onClick={handleClearCache}>
+                    Refresh count
+                  </Button>
                   <Button
                     variant="outline"
                     size="sm"
@@ -230,8 +229,8 @@ export function SettingsPanel({ open, onOpenChange }: SettingsPanelProps) {
                     disabled={isReindexing}
                     className="flex items-center gap-2"
                   >
-                    <RefreshCw className={cn("h-4 w-4", isReindexing && "animate-spin")} />
-                    {isReindexing ? 'Re-indexing...' : 'Re-index'}
+                    <RefreshCw className={cn('h-4 w-4', isReindexing && 'animate-spin')} />
+                    {isReindexing ? 'Re-indexing…' : 'Re-index'}
                   </Button>
                 </div>
               </div>
