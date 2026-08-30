@@ -61,7 +61,17 @@ function run(binary) {
   return new Promise((resolve, reject) => {
     console.log(`[smoke] launching ${binary}`)
 
-    const child = spawn(binary, [], {
+    /*
+     * --no-sandbox on Linux only.
+     *
+     * Chrome refuses to start when its SUID helper is not root-owned with mode
+     * 4755, which an unpacked build in CI never is. The sandbox is a property
+     * of the installed package, not of the code under test, so disabling it
+     * here does not weaken what this check actually proves.
+     */
+    const args = process.platform === 'linux' ? ['--no-sandbox'] : []
+
+    const child = spawn(binary, args, {
       env: {
         ...process.env,
         SEEKR_SMOKE_TEST: '1',

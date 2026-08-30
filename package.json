@@ -80,5 +80,6 @@
     "vitest": "^3.2.7",
     "@electron/notarize": "^3.0.1"
   },
-  "main": "dist-electron/main.js"
+  "main": "dist-electron/main.js",
+  "packageManager": "pnpm@11.22.0"
 }

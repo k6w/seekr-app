@@ -1,18 +1,6 @@
-# pnpm 11 reads settings from this file rather than package.json. It also
-# requires `packages` to be present here, and errors on `pnpm store path`
-# without it -- which is the first thing actions/setup-node's pnpm cache runs,
-# so CI fails before installing anything.
 packages:
   - .
 
-# Dependency build/install scripts are blocked unless listed.
-#   esbuild / electron-winstaller  fetch their platform binaries
-#   electron                       downloads its runtime
-#   better-sqlite3                 explicitly NOT built: it ships N-API
-#                                  prebuilds, and it has a binding.gyp, so
-#                                  pnpm would otherwise run node-gyp for it --
-#                                  which fails on Windows runners that have no
-#                                  Visual Studio, and is wasted work elsewhere
 allowBuilds:
   better-sqlite3: false
   electron: true

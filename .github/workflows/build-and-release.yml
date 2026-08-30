@@ -47,9 +47,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Version comes from `packageManager` in package.json, so CI cannot
+      # drift from local. Pinning 9 here meant pnpm-workspace.yaml settings
+      # were silently ignored, and native modules were compiled from source.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         with:
@@ -76,24 +77,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-          # Without a certificate, electron-builder searches the keychain and
-          # fails the job. Turn discovery off unless one is actually supplied.
-          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.MAC_CSC_LINK != '' }}
-
-          # macOS signing and notarization. With none of these set the build
-          # ships unsigned and says so; with only some of them set it fails,
-          # because that is a misconfiguration rather than a choice. Worth
-          # configuring: macOS keys Full Disk Access to the code signature, so
-          # an unsigned build asks for that permission again after every update.
-          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-
-          # Windows Authenticode.
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          # Releases are deliberately unsigned; users confirm the OS prompt
+          # once, as documented in the README. Do not set CSC_LINK here even to
+          # an empty value: electron-builder treats a defined-but-empty
+          # CSC_LINK as a certificate path and fails resolving it.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
       # The check that matters: does the built binary actually run? An artifact
       # existing proves nothing about whether its native module loads.
