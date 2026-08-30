@@ -11,21 +11,9 @@
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <title>Seekr</title>
-    <script>
-      // Applied before first paint so the app does not flash white on launch.
-      // useTheme only adds the class in an effect, which is too late.
-      try {
-        var stored = localStorage.getItem('seekr-theme')
-        var dark =
-          stored === 'dark' ||
-          ((!stored || stored === 'system') &&
-            window.matchMedia('(prefers-color-scheme: dark)').matches)
-        document.documentElement.classList.add(dark ? 'dark' : 'light')
-      } catch (e) {}
-    </script>
   </head>
   <body>
     <div id="root"></div>

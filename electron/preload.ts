@@ -105,6 +105,12 @@ const api: SeekrApi = {
     openFullDiskAccessSettings: () => invoke(IpcChannel.SystemOpenFdaSettings),
   },
 
+  overlay: {
+    resize: (height) => {
+      void invoke(IpcChannel.OverlayResize, height)
+    },
+  },
+
   window: {
     minimize: () => invoke(IpcChannel.WindowMinimize),
     toggleMaximize: () => invoke(IpcChannel.WindowMaximizeToggle),
@@ -124,6 +130,7 @@ const api: SeekrApi = {
     onFocusSearch: (cb) => subscribe(IpcEvent.FocusSearch, cb),
     onOpenSettings: (cb) => subscribe(IpcEvent.OpenSettings, cb),
     onStartIndexingFromTray: (cb) => subscribe(IpcEvent.StartIndexingFromTray, cb),
+    onOverlayShown: (cb) => subscribe(IpcEvent.OverlayShown, cb),
   },
 }
 

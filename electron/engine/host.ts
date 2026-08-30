@@ -83,6 +83,41 @@ export class EngineHost {
     return true
   }
 
+  /**
+   * Round-trips one request over a real MessagePort and returns the row count.
+   *
+   * Used by the packaged-app smoke test. Checking only that the process
+   * spawned would miss the failure that actually matters: the native binding
+   * failing to load out of the asar, which surfaces as a request that never
+   * gets answered rather than as a crash.
+   */
+  selfTest(timeoutMs = 8_000): Promise<number | null> {
+    if (!this.child || !this.ready) return Promise.resolve(null)
+
+    const { port1, port2 } = new MessageChannelMain()
+    this.child.postMessage({ type: 'attach-port' }, [port1])
+
+    return new Promise((resolve) => {
+      const done = (value: number | null) => {
+        clearTimeout(timer)
+        try {
+          port2.close()
+        } catch {
+          // already closed
+        }
+        resolve(value)
+      }
+
+      const timer = setTimeout(() => done(null), timeoutMs)
+
+      port2.on('message', (event: { data: { kind?: string; count?: number } }) => {
+        if (event.data?.kind === 'index:count') done(event.data.count ?? 0)
+      })
+      port2.start()
+      port2.postMessage({ kind: 'index:count', id: 1 })
+    })
+  }
+
   async stop(): Promise<void> {
     this.stopping = true
     if (!this.child) return

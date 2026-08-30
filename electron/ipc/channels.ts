@@ -22,6 +22,8 @@ export const IpcChannel = {
   SystemOpenFdaSettings: 'seekr:system:open-fda-settings',
 
   IndexRootsChanged: 'seekr:index:roots-changed',
+  /** The overlay reports its content height so the window can size to it. */
+  OverlayResize: 'seekr:overlay:resize',
 
   WindowMinimize: 'seekr:window:minimize',
   WindowMaximizeToggle: 'seekr:window:maximize-toggle',
@@ -36,6 +38,8 @@ export const IpcEvent = {
   FocusSearch: 'seekr:evt:focus-search',
   OpenSettings: 'seekr:evt:open-settings',
   StartIndexingFromTray: 'seekr:evt:start-indexing-from-tray',
+  /** Sent each time the palette is summoned, so it can reset and focus. */
+  OverlayShown: 'seekr:evt:overlay-shown',
 } as const
 
 export type IpcChannelName = (typeof IpcChannel)[keyof typeof IpcChannel]

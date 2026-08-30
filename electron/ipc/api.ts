@@ -83,6 +83,11 @@ export interface SeekrApi {
     openFullDiskAccessSettings(): Promise<IpcResult<void>>
   }
 
+  overlay: {
+    /** Asks main to resize the palette to fit its content. */
+    resize(height: number): void
+  }
+
   window: {
     minimize(): Promise<void>
     toggleMaximize(): Promise<void>
@@ -102,5 +107,7 @@ export interface SeekrApi {
     onFocusSearch(cb: () => void): Unsubscribe
     onOpenSettings(cb: () => void): Unsubscribe
     onStartIndexingFromTray(cb: () => void): Unsubscribe
+    /** Fires when the hotkey palette is summoned. */
+    onOverlayShown(cb: () => void): Unsubscribe
   }
 }

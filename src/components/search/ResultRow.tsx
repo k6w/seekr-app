@@ -72,7 +72,7 @@ function Highlighted({ text, ranges }: { text: string; ranges: Array<[number, nu
     <>
       {parts.map((part, i) =>
         part.match ? (
-          <mark key={i} className="rounded-[2px] bg-primary/25 text-inherit">
+          <mark key={i} className="mark bg-transparent">
             {part.text}
           </mark>
         ) : (
@@ -121,8 +121,8 @@ export const ResultRow = memo(function ResultRow({
         window.seekr.file.startDrag(row.fullPath)
       }}
       className={cn(
-        'group flex cursor-default items-center gap-3 px-3',
-        isActive ? 'bg-accent' : 'hover:bg-accent/50',
+        'group flex cursor-default items-center gap-2.5 pl-3 pr-2',
+        isActive ? 'row-cursor bg-accent' : 'hover:bg-accent/60',
       )}
     >
       <Icon
@@ -134,14 +134,17 @@ export const ResultRow = memo(function ResultRow({
         <div className="truncate text-sm leading-tight">
           <Highlighted text={row.name} ranges={row.highlights} />
         </div>
-        <div className="truncate text-xs leading-tight text-muted-foreground" title={row.dir}>
+        <div
+          className="truncate font-mono text-xs leading-tight text-muted-foreground"
+          title={row.dir}
+        >
           {row.dir}
         </div>
       </div>
 
-      <div className="hidden shrink-0 items-center gap-4 text-xs tabular-nums text-muted-foreground sm:flex">
-        <span className="w-16 text-right">{row.isDirectory ? '—' : formatSize(row.size)}</span>
-        <span className="w-20 text-right">{formatDate(row.mtimeMs)}</span>
+      <div className="nums hidden shrink-0 items-center gap-4 font-mono text-xs text-muted-foreground sm:flex">
+        <span className="w-14 text-right">{row.isDirectory ? '—' : formatSize(row.size)}</span>
+        <span className="w-[4.5rem] text-right">{formatDate(row.mtimeMs)}</span>
       </div>
 
       {/* Revealed on hover or when this row is the keyboard cursor. */}

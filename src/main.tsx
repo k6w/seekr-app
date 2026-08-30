@@ -1,3 +1,5 @@
+// Must be first: applies the theme class before anything renders.
+import './lib/theme-boot'
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.tsx'

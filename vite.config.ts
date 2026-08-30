@@ -49,15 +49,31 @@ export default defineConfig({
         vite: {
           build: {
             outDir: 'dist-electron',
-            rollupOptions: {
-              output: { format: 'cjs', entryFileNames: 'preload.cjs' },
-              external: ['electron'],
+            // Vite ignores rollupOptions.output.format in library mode, so the
+            // format has to be set here. Getting this wrong is silent and
+            // total: the preload emits ESM, a sandboxed renderer has no ESM
+            // loader for preloads, the script never runs, window.seekr is
+            // never defined, and the window renders blank with no error.
+            lib: {
+              entry: path.join(__dirname, 'electron/preload.ts'),
+              formats: ['cjs'],
+              fileName: () => 'preload.cjs',
             },
+            rollupOptions: { external: ['electron'] },
           },
         },
       },
     ]),
   ],
+  build: {
+    rollupOptions: {
+      // Two renderer entries: the browsing window and the hotkey overlay.
+      input: {
+        main: path.resolve(__dirname, "index.html"),
+        overlay: path.resolve(__dirname, "overlay.html"),
+      },
+    },
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

@@ -19,6 +19,7 @@ import { getSystemInfo } from './services/platform'
 import { EngineHost } from './engine/host'
 import { ENGINE_PORT_CHANNEL } from './engine/protocol'
 import { IpcChannel, IpcEvent } from './ipc/channels'
+import { createOverlayWindow, resizeOverlay, toggleOverlay } from './windows/overlay'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -32,6 +33,7 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
   : RENDERER_DIST
 
 let win: BrowserWindow | null = null
+let overlay: BrowserWindow | null = null
 let tray: Tray | null = null
 let settings: SettingsStore | null = null
 let ipcHandlers: IpcHandlers | null = null
@@ -87,6 +89,32 @@ function hardenWebContents(contents: Electron.WebContents): void {
 
   // No part of this app uses <webview>.
   contents.on('will-attach-webview', (event) => event.preventDefault())
+
+  /**
+   * Renderer console and load failures, into the app log.
+   *
+   * Without this, a renderer that throws on boot shows the user a blank window
+   * and leaves no trace anywhere they can reach -- devtools are not available
+   * in a packaged build.
+   */
+  contents.on('console-message', (event) => {
+    const line = `[renderer] ${event.message} (${event.sourceId}:${event.lineNumber})`
+    if (event.level === 'error') log.error(line)
+    else if (event.level === 'warning') log.warn(line)
+    else log.info(line)
+  })
+
+  contents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    log.error(`Renderer failed to load ${validatedURL}: ${errorDescription} (${errorCode})`)
+  })
+
+  contents.on('render-process-gone', (_event, details) => {
+    log.error('Renderer process gone:', details.reason, details.exitCode)
+  })
+
+  contents.on('preload-error', (_event, preloadPath, error) => {
+    log.error(`Preload failed at ${preloadPath}:`, error)
+  })
 }
 
 /**
@@ -215,6 +243,20 @@ function attachEngine(window: BrowserWindow): void {
   }
 }
 
+function createOverlay(): void {
+  overlay = createOverlayWindow({
+    preloadPath: path.join(__dirname, 'preload.cjs'),
+    devServerUrl: VITE_DEV_SERVER_URL,
+    rendererDist: RENDERER_DIST,
+    // The palette gets its own port to the engine, so summoning it never
+    // competes with the main window for the main process.
+    onCreated: (window) => {
+      hardenWebContents(window.webContents)
+      attachEngine(window)
+    },
+  })
+}
+
 function showWindow(): void {
   if (!win) {
     createWindow()
@@ -293,6 +335,11 @@ function registerWindowHandlers(): void {
   })
   ipcMain.handle(IpcChannel.WindowHide, () => win?.hide())
   ipcMain.handle(IpcChannel.WindowIsMaximized, () => win?.isMaximized() ?? false)
+  ipcMain.handle(IpcChannel.OverlayResize, (_event, height: unknown) => {
+    if (overlay && typeof height === 'number' && Number.isFinite(height)) {
+      resizeOverlay(overlay, height)
+    }
+  })
   ipcMain.handle(IpcChannel.AppQuit, () => {
     isQuitting = true
     app.quit()
@@ -301,8 +348,11 @@ function registerWindowHandlers(): void {
 
 function registerGlobalShortcut(): void {
   const accelerator = settings?.get().globalHotkey ?? 'CmdOrCtrl+Shift+F'
+  // The hotkey summons the palette, not the browsing window. That is the
+  // whole point of having two surfaces: the fast one is what the muscle
+  // memory reaches for.
   const registered = globalShortcut.register(accelerator, () => {
-    if (win?.isVisible() && win.isFocused()) win.hide()
+    if (overlay) toggleOverlay(overlay)
     else showWindow()
   })
 
@@ -319,6 +369,8 @@ async function shutdown(): Promise<void> {
   ipcHandlers?.dispose()
   indexReader?.close()
   await engineHost?.stop()
+  overlay?.destroy()
+  overlay = null
   tray?.destroy()
   tray = null
 }
@@ -347,6 +399,7 @@ async function bootstrap(): Promise<void> {
 
   registerWindowHandlers()
   createWindow()
+  createOverlay()
   createTray()
   registerGlobalShortcut()
 
@@ -358,11 +411,17 @@ async function bootstrap(): Promise<void> {
    * "was a file produced?" CI check cannot detect.
    */
   if (process.env.SEEKR_SMOKE_TEST === '1') {
+    // Round-trip a real request so this proves the protocol works, not merely
+    // that a process was spawned.
+    const count = engineReady ? await engineHost.selfTest() : null
+    const healthy = count !== null
     process.stdout.write(
-      engineReady ? 'SEEKR_SMOKE_OK\n' : 'SEEKR_SMOKE_FAIL: engine did not start\n',
+      healthy
+        ? `SEEKR_SMOKE_OK indexed=${count}\n`
+        : 'SEEKR_SMOKE_FAIL: engine did not answer\n',
     )
     isQuitting = true
-    setTimeout(() => app.exit(engineReady ? 0 : 1), 500)
+    setTimeout(() => app.exit(healthy ? 0 : 1), 500)
     return
   }
 
