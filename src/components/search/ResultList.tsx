@@ -48,10 +48,13 @@ export function ResultList({
   const [viewportHeight, setViewportHeight] = useState(600)
   const [activeIndex, setActiveIndex] = useState(0)
 
-  // Reset the cursor whenever the result set itself changes.
+  // Reset the cursor whenever the result set itself changes. Keyed on the
+  // first row's id, which changes for a new query but not when a further page
+  // is appended.
+  const firstRowId = rows[0]?.id ?? ''
   useEffect(() => {
     setActiveIndex(0)
-  }, [rows.length === 0 ? '' : rows[0]?.id])
+  }, [firstRowId])
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current

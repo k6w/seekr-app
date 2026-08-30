@@ -1,7 +1,7 @@
 {
   "name": "seekr",
   "private": false,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Instant file search for macOS, Windows and Linux",
   "author": "k6w",
   "homepage": "https://github.com/k6w/seekr-app",
@@ -50,7 +50,8 @@
     "react-dom": "^18.2.0",
     "tailwind-merge": "^3.3.1",
     "uuid": "^11.1.0",
-    "electron-log": "^5.4.4"
+    "electron-log": "^5.4.4",
+    "electron-updater": "^6.8.9"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

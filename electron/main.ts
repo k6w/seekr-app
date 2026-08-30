@@ -20,6 +20,8 @@ import { EngineHost } from './engine/host'
 import { ENGINE_PORT_CHANNEL } from './engine/protocol'
 import { IpcChannel, IpcEvent } from './ipc/channels'
 import { createOverlayWindow, resizeOverlay, toggleOverlay } from './windows/overlay'
+import { buildApplicationMenu } from './windows/menu'
+import { checkForUpdatesInteractive, initializeUpdater } from './services/updater'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -402,6 +404,31 @@ async function bootstrap(): Promise<void> {
   createOverlay()
   createTray()
   registerGlobalShortcut()
+
+  buildApplicationMenu({
+    getMainWindow: () => win,
+    showMainWindow: showWindow,
+    toggleOverlay: () => {
+      if (overlay) toggleOverlay(overlay)
+    },
+    rebuildIndex: () => {
+      showWindow()
+      win?.webContents.send(IpcEvent.StartIndexingFromTray)
+    },
+    openSettings: () => {
+      showWindow()
+      win?.webContents.send(IpcEvent.OpenSettings)
+    },
+    globalHotkey: settings?.get().globalHotkey ?? 'CmdOrCtrl+Shift+F',
+    checkForUpdates: () => void checkForUpdatesInteractive(win),
+  })
+
+  initializeUpdater(() => win)
+
+  // The menu bar is redundant on Windows and Linux, where the window draws its
+  // own chrome, but keeping the menu registered means the accelerators in it
+  // still fire.
+  if (process.platform !== 'darwin') win?.setMenuBarVisibility(false)
 
   /**
    * Packaged-app smoke test (scripts/smoke-packaged.cjs).

@@ -15,6 +15,17 @@
     "**/*.node"
   ],
 
+  // Generates latest.yml / latest-mac.yml alongside the artifacts, which is
+  // what electron-updater reads. Without a publish block no manifest exists
+  // and auto-update cannot work at all.
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "k6w",
+      "repo": "seekr-app"
+    }
+  ],
+
   "directories": {
     "output": "release/${version}",
     "buildResources": "build"

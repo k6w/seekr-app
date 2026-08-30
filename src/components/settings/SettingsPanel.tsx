@@ -7,6 +7,7 @@ import {
   DialogTitle,
   DialogFooter,
   DialogClose,
+  DialogDismiss,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { useTheme } from '@/hooks/useTheme'
@@ -88,7 +89,8 @@ export function SettingsPanel({ open, onOpenChange }: SettingsPanelProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogHeader>
-        <DialogTitle className="text-base">Settings</DialogTitle>
+        <DialogTitle>Settings</DialogTitle>
+        <DialogDismiss onClick={() => onOpenChange(false)} />
       </DialogHeader>
 
       <DialogContent className="space-y-6">
